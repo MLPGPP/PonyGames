@@ -685,9 +685,10 @@ function initResourceDetailPanel() {
       assetPacksEl.innerHTML = `<p>${item.assetPacks.join(", ")}</p>`;
     }
 
-    const downloadsEl = panel.querySelector(".download-row__btns");
+    const downloadsEl = panel.querySelector(".detail-panel__downloads");
     if (downloadsEl) {
-      downloadsEl.innerHTML = item.downloads.map((downloadURL) => {
+
+      function makeButton(downloadURL) {
         let buttonText = "Download";
         try {
           const urlObj = new URL(downloadURL);
@@ -696,7 +697,16 @@ function initResourceDetailPanel() {
           console.error(err);
         }
         return `<a class="download-row__btn" href="${downloadURL}" target="_blank" rel="noopener noreferrer">${buttonText}</a>`;
-      }).join("")
+      }
+
+      downloadsEl.innerHTML = [{buttons: item.downloads.map(makeButton), label: item.name}, {buttons: item.assetPackDownloads.map(makeButton), label: item.primaryAssetPack}].map(args =>
+        args.buttons.length ? `<div class="download-row">
+          <div class="download-row__btns">${args.buttons.join("")}</div>
+          <span class="download-row__info">
+          <span class="download-row__label">Download ${args.label}</span>
+          </span>
+          </div>` : ""
+        ).join("");
     }
 
     common.openPanel(allImages, false, false, item.name, item.tags, item.description, authors);
@@ -1204,7 +1214,13 @@ async function initCardGrid(jsonPath) {
   const allTags = new Set(resourcesJSON["allTags"]);
   const allLicenses = new Set(resourcesJSON["allLicenses"]);
   const allAuthors = new Set(resourcesJSON["allAuthors"]);
-  const allAssetPacks = new Set(resourcesJSON["allAssetPacks"]);
+  const allAssetPacks = new Set(Object.keys(resourcesJSON["allAssetPacks"]));
+
+  items.forEach(item => {
+    if (item.primaryAssetPack && item.primaryAssetPack in resourcesJSON.allAssetPacks) {
+      item.assetPackDownloads = resourcesJSON.allAssetPacks[item.primaryAssetPack].downloads;
+    }
+  });
 
   const itemMap = new Map(items.map((item) => [String(item.id), item]));
 
