@@ -823,6 +823,16 @@ body {
   opacity: 0.85;
 }
 
+.sidebar-game__thumb-wrap {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  line-height: 0;
+}
+
 .sidebar-game__thumb {
   width: 48px;
   height: 48px;
@@ -830,6 +840,22 @@ body {
   object-fit: cover;
   background: var(--color-surface);
   flex-shrink: 0;
+}
+
+.sidebar-game__thumb--nsfw {
+  filter: blur(10px) brightness(0.65);
+}
+
+.sidebar-game__nsfw-badge {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  line-height: 1;
+  background: rgba(0, 0, 0, 0.35);
+  pointer-events: none;
 }
 
 .sidebar-game__info {

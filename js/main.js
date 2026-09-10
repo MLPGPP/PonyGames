@@ -702,14 +702,19 @@ function bindCardInteractions(grid, itemMap, detail) {
    Game Sidebar
    ========================================================================== */
 function renderSidebarGame(game, index = 0) {
+  const nsfw = isNsfwItem(game);
+
   return `
     <button type="button" class="sidebar-game sidebar-game--enter" data-id="${game.id}" style="animation-delay: ${index * 80}ms">
-      <img
-        class="sidebar-game__thumb"
-        src="${game.thumbnail}"
-        alt="${game.title} thumbnail"
-        loading="lazy"
-      />
+      <span class="sidebar-game__thumb-wrap">
+        <img
+          class="sidebar-game__thumb${nsfw ? " sidebar-game__thumb--nsfw" : ""}"
+          src="${game.thumbnail}"
+          alt="${game.title} thumbnail"
+          loading="lazy"
+        />
+        ${nsfw ? `<span class="sidebar-game__nsfw-badge" title="NSFW, open the game to reveal">🔞</span>` : ""}
+      </span>
       <div class="sidebar-game__info">
         <p class="sidebar-game__name">${game.title}</p>
         <p class="sidebar-game__desc">${game.shortDescription}</p>
