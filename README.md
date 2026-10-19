@@ -1,5 +1,12 @@
 # Pony Games
 
+<div align="center">
+  <img src="https://games.mare.by/static/ponygames_logo.png" alt="logo" width="200">
+</div>
+<div align="center">
+  <img src="https://pony.games/textlogo.png" alt="logo" width="400">
+</div>
+
 Community-run directory of pony fan games, jams, and dev resources.
 Static site, no build step, no dependencies.
 
