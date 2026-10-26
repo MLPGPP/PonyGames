@@ -696,17 +696,23 @@ function initResourceDetailPanel() {
         } catch (err) {
           console.error(err);
         }
-        return `<a class="download-row__btn" href="${downloadURL}" target="_blank" rel="noopener noreferrer">${buttonText}</a>`;
+        return `<a class="download-row__btn" href="${downloadURL}" target="_blank" rel="noopener noreferrer">${buttonText}</a>`
       }
 
-      downloadsEl.innerHTML = [{buttons: item.downloads.map(makeButton), label: item.name}, {buttons: item.assetPackDownloads.map(makeButton), label: item.primaryAssetPack}].map(args =>
-        args.buttons.length ? `<div class="download-row">
-          <div class="download-row__btns">${args.buttons.join("")}</div>
-          <span class="download-row__info">
-          <span class="download-row__label">Download ${args.label}</span>
+      const urls = [
+        ...(item.downloads || []),
+        ...(item.assetPackDownloads || []),
+      ];
+
+      downloadsEl.innerHTML = urls.map((url, i) => `
+        <div class="download-row">
+          <div class="download-row__btns">${makeButton(url)}</div>
+          <span class="download-row__info"></span>
+            ${i === 0 ? `<span class="download-row__label">Download ${item.name}</span>` : ""}
           </span>
-          </div>` : ""
-        ).join("");
+        </div>
+      `).join("")
+
     }
 
     common.openPanel(allImages, false, false, item.name, item.tags, item.description, authors);
