@@ -1,0 +1,16 @@
+{
+  "_readme": "Missing games for the bounty board (bounties.html). See README.md, section 'Bounties'. The three entries below are EXAMPLES: replace them with real missing games.",
+  "bounties": [
+    {
+      "id": "1",
+      "title": "Example",
+      "authors": ["Unknown pony"],
+      "year": "2012",
+      "platform": "Flash",
+      "description": "EXAMPLE ENTRY, replace me.",
+      "lastSeenUrl": "",
+      "image": "",
+      "status": "wanted"
+    }
+  ]
+}

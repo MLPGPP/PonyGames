@@ -1,11 +1,11 @@
 {
-  "state": "upcoming",
+  "state": "active",
   "lastJamUrl": "https://itch.io/jam/mlpcon-game-jam-no-movment",
-  "lastJamLabel": "Off-con Game Jam: Revival",
+  "lastJamLabel": "Game Jam: No movment",
   "startDate": "2026-10-23T02:00",
-  "endDate": "2026-11-13T02:00",
-  "currentJamUrl": "",
-  "currentJamLabel": "Summer Pony Jam 2026",
+  "endDate": "2026-11-14T02:00",
+  "currentJamUrl": "https://itch.io/jam/mlp-off-con-game-jam-rebirth",
+  "currentJamLabel": "Off-con Game Jam: Rebirth",
   "messages": {
     "none": "No jam running right now. Check back soon!",
     "upcoming": "Next jam starts in",

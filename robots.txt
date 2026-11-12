@@ -1,0 +1,12 @@
+User-agent: *
+Disallow: /admin/
+Disallow: /account
+Disallow: /login
+Disallow: /logout
+Disallow: /reset.php
+Disallow: /verify.php
+Disallow: /notify-off.php
+Disallow: /api/
+Disallow: /inc/
+
+Sitemap: https://pony.games/sitemap.xml

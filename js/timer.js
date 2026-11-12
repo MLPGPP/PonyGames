@@ -20,9 +20,6 @@ const UNIT_CONFIG = [
   { key: "seconds", label: "Sec", max: 60 },
 ];
 
-const RING_RADIUS = 36;
-const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
-
 function toUTCTimestamp(dateStr) {
   if (!dateStr) return null;
   const normalized = /[+-]\d{2}:\d{2}$/.test(dateStr) || /Z$/.test(dateStr)
@@ -53,99 +50,64 @@ async function loadJamConfig() {
   }
 }
 
+function formatJamDate(timestamp) {
+  return new Date(timestamp).toLocaleString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function initJamTimer(config) {
   const container = document.getElementById("jam-timer");
   if (!container) return;
 
   const statusEl = container.querySelector(".jam-timer__status");
+  const titleEl = container.querySelector(".jam-timer__title");
   const messageEl = container.querySelector(".jam-timer__message");
   const countdownEl = container.querySelector(".jam-timer__countdown");
   const linkEl = container.querySelector(".jam-timer__link");
 
   let intervalId = null;
-  let totalDuration = null;
-  let previousValues = {};
 
   function pad(n) {
     return String(n).padStart(2, "0");
   }
 
-  function buildRingSVG() {
-    return `
-      <svg class="jam-timer__ring-svg" viewBox="0 0 80 80" aria-hidden="true">
-        <circle class="jam-timer__ring-bg" cx="40" cy="40" r="${RING_RADIUS}" />
-        <circle class="jam-timer__ring-progress" cx="40" cy="40" r="${RING_RADIUS}"
-          stroke-dasharray="${RING_CIRCUMFERENCE}"
-          stroke-dashoffset="${RING_CIRCUMFERENCE}" />
-      </svg>
-    `;
+  function setTitle(text) {
+    if (!titleEl) return;
+    titleEl.textContent = text || "";
+    titleEl.hidden = !text;
   }
 
-  function buildCountdownShell() {
+  function buildCountdownShell(showProgress) {
     countdownEl.innerHTML = `
-      <div class="jam-timer__arc-wrap" aria-hidden="true">
-        <svg class="jam-timer__arc" viewBox="0 0 200 100">
-          <defs>
-            <linearGradient id="jam-arc-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="#f39c12" />
-              <stop offset="50%" stop-color="#e94560" />
-              <stop offset="100%" stop-color="#9b59b6" />
-            </linearGradient>
-          </defs>
-          <path class="jam-timer__arc-track" d="M 20 90 A 80 80 0 0 1 180 90" />
-          <path class="jam-timer__arc-fill" d="M 20 90 A 80 80 0 0 1 180 90"
-            stroke="url(#jam-arc-gradient)" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" />
-        </svg>
-        <div class="jam-timer__arc-icon" aria-hidden="true">☀</div>
-      </div>
-      <div class="jam-timer__units">
+      <div class="jam-timer__units" role="timer" aria-live="off">
         ${UNIT_CONFIG.map(
           (u) => `
           <div class="jam-timer__unit" data-unit="${u.key}">
-            <div class="jam-timer__ring">
-              ${buildRingSVG()}
-              <span class="jam-timer__digit">00</span>
-            </div>
+            <span class="jam-timer__digit">00</span>
             <span class="jam-timer__label">${u.label}</span>
           </div>
         `
         ).join("")}
       </div>
+      ${
+        showProgress
+          ? `<div class="jam-timer__progress" role="progressbar" aria-label="Jam progress" aria-valuemin="0" aria-valuemax="100">
+               <div class="jam-timer__progress-fill"></div>
+             </div>
+             <p class="jam-timer__progress-text"></p>`
+          : ""
+      }
     `;
-  }
-
-  function updateRing(unitEl, value, max) {
-    const ring = unitEl.querySelector(".jam-timer__ring-progress");
-    if (!ring) return;
-    const progress = Math.min(1, Math.max(0, value / max));
-    ring.style.strokeDashoffset = String(RING_CIRCUMFERENCE * (1 - progress));
-  }
-
-  function updateFlipDigit(unitEl, unitKey, newValue, usePad) {
-    const display = usePad ? pad(newValue) : String(newValue);
-    if (previousValues[unitKey] === newValue) return;
-    previousValues[unitKey] = newValue;
-    const digitEl = unitEl.querySelector(".jam-timer__digit");
-    if (!digitEl) return;
-    digitEl.textContent = display;
-  }
-
-  function updateArc(progress) {
-    const fill = countdownEl.querySelector(".jam-timer__arc-fill");
-    const icon = countdownEl.querySelector(".jam-timer__arc-icon");
-    if (!fill) return;
-    fill.style.strokeDashoffset = String(1 - Math.min(1, Math.max(0, progress)));
-
-    if (icon) {
-      icon.textContent = progress > 0.5 ? "☀" : "☾";
-      icon.style.opacity = String(0.5 + progress * 0.5);
-      icon.style.transform = `rotate(${progress * 180}deg)`;
-    }
   }
 
   function triggerComplete(state) {
     container.classList.add("jam-timer--complete");
-    statusEl.textContent = state === "active" ? "Jam Live" : "Time's Up";
+    statusEl.textContent = state === "active" ? "Jam live!" : "Time's up, ponies!";
     messageEl.textContent =
       state === "active" ? config.messages.complete : config.messages.ended;
     countdownEl.classList.add("jam-timer__countdown--finished");
@@ -153,7 +115,7 @@ function initJamTimer(config) {
     if (state === "active" && config.currentJamUrl) {
       linkEl.hidden = false;
       linkEl.href = config.currentJamUrl;
-      linkEl.textContent = `Go to ${config.currentJamLabel}`;
+      linkEl.textContent = `Hoof it to ${config.currentJamLabel}`;
       linkEl.classList.add("jam-timer__link--pulse");
     }
   }
@@ -162,7 +124,8 @@ function initJamTimer(config) {
     container.classList.remove("jam-timer--complete");
     countdownEl.hidden = true;
     countdownEl.classList.remove("jam-timer__countdown--finished");
-    statusEl.textContent = "No Jam";
+    statusEl.textContent = "The jam stable is quiet";
+    setTitle(config.lastJamLabel ? `Last jam: ${config.lastJamLabel}` : "");
     messageEl.textContent = config.messages.none;
     if (config.lastJamUrl) {
       linkEl.hidden = false;
@@ -174,40 +137,30 @@ function initJamTimer(config) {
     linkEl.classList.remove("jam-timer__link--pulse");
   }
 
-  function renderCountdown(targetTimestamp, statusLabel, messageText, linkConfig, completeState, startTimestamp, showArc) {
+  function renderCountdown(targetTimestamp, statusLabel, messageText, linkConfig, completeState, startTimestamp) {
     container.classList.remove("jam-timer--complete");
     countdownEl.hidden = false;
     countdownEl.classList.remove("jam-timer__countdown--finished");
     statusEl.textContent = statusLabel;
-    messageEl.textContent = messageText;
-    totalDuration = null;
-    previousValues = {};
+    messageEl.textContent = `${messageText} ${formatJamDate(targetTimestamp)}`;
 
-    if (linkConfig) {
+    if (linkConfig && linkConfig.url) {
       linkEl.hidden = false;
       linkEl.href = linkConfig.url;
       linkEl.textContent = linkConfig.label;
-      linkEl.classList.remove("jam-timer__link--pulse");
     } else {
       linkEl.hidden = true;
-      linkEl.classList.remove("jam-timer__link--pulse");
     }
-
-    buildCountdownShell();
-
-    const arcWrap = countdownEl.querySelector(".jam-timer__arc-wrap");
-    if (arcWrap) arcWrap.style.display = showArc ? "" : "none";
+    linkEl.classList.remove("jam-timer__link--pulse");
 
     const end = targetTimestamp;
     const start = startTimestamp;
-    let daysMax = 30;
+    const showProgress = start !== null && start !== undefined && start < end;
+    buildCountdownShell(showProgress);
 
-    if (showArc && start !== null && start < end) {
-      totalDuration = end - start;
-      daysMax = Math.floor(totalDuration / (1000 * 60 * 60 * 24)) || 1;
-    } else {
-      totalDuration = null;
-    }
+    const fill = countdownEl.querySelector(".jam-timer__progress-fill");
+    const bar = countdownEl.querySelector(".jam-timer__progress");
+    const progressText = countdownEl.querySelector(".jam-timer__progress-text");
 
     function tick() {
       const now = Date.now();
@@ -219,28 +172,23 @@ function initJamTimer(config) {
         return;
       }
 
-      const effectiveDaysMax = totalDuration
-        ? daysMax
-        : Math.max(Math.floor(diff / (1000 * 60 * 60 * 24)), 1);
-
-      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-      const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
-      const minutes = Math.floor((diff / (1000 * 60)) % 60);
-      const seconds = Math.floor((diff / 1000) % 60);
-      const values = { days, hours, minutes, seconds };
+      const values = {
+        days: Math.floor(diff / (1000 * 60 * 60 * 24)),
+        hours: Math.floor((diff / (1000 * 60 * 60)) % 24),
+        minutes: Math.floor((diff / (1000 * 60)) % 60),
+        seconds: Math.floor((diff / 1000) % 60),
+      };
 
       UNIT_CONFIG.forEach((u) => {
-        const unitEl = countdownEl.querySelector(`[data-unit="${u.key}"]`);
-        if (!unitEl) return;
-        const max = u.key === "days" ? effectiveDaysMax : u.max;
-        updateRing(unitEl, values[u.key], max);
-        updateFlipDigit(unitEl, u.key, values[u.key], u.key !== "days");
+        const digit = countdownEl.querySelector(`[data-unit="${u.key}"] .jam-timer__digit`);
+        if (digit) digit.textContent = u.key === "days" ? String(values.days) : pad(values[u.key]);
       });
 
-      if (showArc && totalDuration) {
-        const elapsed = now - start;
-        const progress = Math.min(1, Math.max(0, elapsed / totalDuration));
-        updateArc(progress);
+      if (showProgress && fill) {
+        const pct = Math.min(100, Math.max(0, ((now - start) / (end - start)) * 100));
+        fill.style.width = `${pct}%`;
+        bar.setAttribute("aria-valuenow", String(Math.round(pct)));
+        if (progressText) progressText.textContent = `${Math.round(pct)}% of the jam has galloped by`;
       }
     }
 
@@ -254,25 +202,25 @@ function initJamTimer(config) {
       renderNoJam();
       break;
     case "upcoming":
+      setTitle(config.currentJamLabel);
       renderCountdown(
         config.startDate,
-        "Upcoming Jam",
-        config.messages.upcoming,
-        null,
+        "Upcoming jam",
+        "Starts",
+        config.currentJamUrl ? { url: config.currentJamUrl, label: `View ${config.currentJamLabel}` } : null,
         "upcoming",
-        null,
-        false
+        null
       );
       break;
     case "active":
+      setTitle(config.currentJamLabel);
       renderCountdown(
         config.endDate,
-        "Jam Active",
-        config.messages.active,
-        { url: config.currentJamUrl, label: `Go to ${config.currentJamLabel}` },
+        "Jam in progress!",
+        "Ends",
+        { url: config.currentJamUrl, label: "Hoof it to the jam!" },
         "active",
-        config.startDate,
-        true
+        config.startDate
       );
       break;
     default:
