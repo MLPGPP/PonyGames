@@ -4514,3 +4514,5 @@ html[data-me] .site-nav .account-link:not(.is-logged-in) { visibility: hidden; }
 .auth-form__terms a:hover, .post-form__rules a:hover, .site-footer__credit a:hover { color: var(--color-accent-soft); }
 .post-form__rules { color: var(--color-text-muted); font-size: 0.85em; }
 .site-footer__sep { margin: 0 0.3rem; opacity: 0.6; }
+.rules__item a { color: var(--color-accent-soft); text-decoration: underline; text-underline-offset: 2px; }
+.rules__item a:hover { color: var(--color-accent); }

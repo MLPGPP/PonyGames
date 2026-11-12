@@ -6,7 +6,7 @@
  * Paths are absolute because game pages live under /game/.
  */
 
-const ASSET_V = '20261112a'; // bump together with the ?v= in the static pages
+const ASSET_V = '20261112b'; // bump together with the ?v= in the static pages
 
 /** <!DOCTYPE> through the header, for simple PHP pages (login, account, ...). */
 function render_page_start(string $title, string $active = '', string $description = '', bool $noindex = true): void

@@ -9,17 +9,20 @@ require __DIR__ . '/inc/auth.php';
 require __DIR__ . '/inc/layout.php';
 
 const RULES_UPDATED = 'November 11, 2026';
+const RULES_MAIL = '<a href="mailto:contact@pony.games">contact@pony.games</a>';
 
+// [number, icon, title, text]. The text is HTML (only our own links in it).
 $rules = [
-    ['💬', 'Be kind', 'Criticise games, not people. No insults, threats, harassment or bullying of other members or of developers. Disagreeing is fine; being mean about it isn\'t.'],
-    ['🚫', 'No hate', 'No racism, sexism, homophobia, transphobia or other hate, slurs or hateful symbols, in messages, reviews or display names.'],
-    ['🛡️', 'Keep it safe for everypony', 'No sexual or gory content in reviews, messages or display names. Games tagged NSFW can be listed (they\'re hidden by default), but talk about them stays tasteful.'],
-    ['⭐', 'Honest reviews', 'Only review games you\'ve played. No fake reviews, no review bombing, and no rating your own game with extra accounts.'],
-    ['📣', 'No spam', 'No repeating the same message, no posting just to collect stars. Links aren\'t allowed in reviews and messages. Developers are welcome to answer questions about their own game in its discussion.'],
-    ['🧭', 'Stay on topic', 'A game\'s discussion is about that game. Warn others before spoilers (start with "Spoiler:").'],
-    ['🔒', 'Respect privacy', 'Don\'t share anyone\'s personal information, like real names, addresses or contact details, without their permission.'],
-    ['🐴', 'One pony, one account', 'Don\'t pretend to be another member, a developer or a moderator. Making a new account to get around a ban gets every account banned.'],
-    ['🏳️', 'Report, don\'t fight back', 'See something that breaks these rules? Use the report button (🏳) on the message or game and let the moderators handle it.'],
+    ['1', '🔞', 'NSFW stays in NSFW', 'Explicit language and topics are only allowed on explicit games (tagged with gore or NSFW).'],
+    ['2', '🧭', 'Stay on topic', 'Reviews and comments must stay on topic. It\'s not allowed to bring in outside drama/gossip or make observations about the game\'s creator or the team behind it.'],
+    ['3', '⭐', 'Quality reviews', 'Reviews must be truthful and objective. They have to have quantifiable information. The reviewer must have played the game to review it.'],
+    ['4', '🔗', 'No links', 'Posting external links on the site is strictly prohibited. You can email us info at ' . RULES_MAIL . ' or share it via the <a href="/submit">submission forms</a>.'],
+    ['5', '🛡️', 'No targeted harassment', 'Calls to action (aka RAIDS) and targeted campaigns are not allowed on the site. Neither is doxing.'],
+    ['6', '📣', 'No spamming or extremely low quality comments', 'Posting the same comments and reviews over and over in multiple or the same game pages with no changes is prohibited. Posting extremely low quality comments is also not allowed; Example: “sadfgdgjhke LOL :), me am me jajajja”.'],
+    ['7', '🐴', 'One account per pony', 'Only one account per person is permitted. If you need multiple accounts, please reach us via email at ' . RULES_MAIL . '. If you\'re found to have multiple accounts without permission, all your accounts will be banned.'],
+    ['8', '🎭', 'No impersonators', 'Pretending to be a member or staff or a dev will get you banned.'],
+    ['9', '🏳️', 'Report and move on', 'If you see someone going against the spirit of the rules or breaking them outright, report them using the report button (🏳) on the message or the game and move on. Don\'t get into needless arguments.'],
+    ['∞', '⚖️', 'Leeway', 'Mods are the final interpreters of the rules. If they feel a user breaks the spirit of a rule, the mods are allowed to inflict punishment, with a proper justification.'],
 ];
 
 render_page_start('Site Rules', 'about', 'The Site Rules of Pony Games: how we keep reviews and discussions friendly for everypony.', false);
@@ -37,12 +40,12 @@ render_page_start('Site Rules', 'about', 'The Site Rules of Pony Games: how we k
       </section>
 
       <ol class="rules__list">
-<?php foreach ($rules as $i => [$icon, $title, $text]): ?>
-        <li class="rules__item" id="rule-<?= $i + 1 ?>">
+<?php foreach ($rules as [$num, $icon, $title, $text]): ?>
+        <li class="rules__item" id="rule-<?= $num === '∞' ? 'leeway' : $num ?>">
           <span class="rules__icon" aria-hidden="true"><?= $icon ?></span>
           <div>
-            <h2 class="rules__title"><?= $i + 1 ?>. <?= h($title) ?></h2>
-            <p><?= h($text) ?></p>
+            <h2 class="rules__title">Rule #<?= $num ?>. <?= h($title) ?></h2>
+            <p><?= $text ?></p>
           </div>
         </li>
 <?php endforeach ?>
