@@ -609,9 +609,9 @@ $form = function (string $do, int $id, string $label, string $view, bool $danger
   <?php elseif ($view === 'posts'):
     // ?user=12: only the posts of one account (from its Manage page)
     $onlyUser = (int)($_GET['user'] ?? 0);
-    $st = $pdo->prepare('SELECT p.*, u.display_name AS member FROM posts p LEFT JOIN users u ON u.id = p.user_id
-                         WHERE (? = 0 OR p.user_id = ?) ORDER BY p.created_at DESC LIMIT ' . ($onlyUser ? 1000 : 200));
-    $st->execute([$onlyUser, $onlyUser]);
+    $st = $pdo->prepare('SELECT p.*, u.display_name AS member FROM posts p LEFT JOIN users u ON u.id = p.user_id'
+                        . ($onlyUser ? ' WHERE p.user_id = ?' : '') . ' ORDER BY p.created_at DESC LIMIT ' . ($onlyUser ? 1000 : 200));
+    $st->execute($onlyUser ? [$onlyUser] : []);
     $rows = $st->fetchAll();
     $extra = $onlyUser ? ['user' => $onlyUser] : [];
     if ($onlyUser): ?>
