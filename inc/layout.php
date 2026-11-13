@@ -6,7 +6,7 @@
  * /game/12-title, ... CSS/JS get ?v=ASSET_V so browsers fetch new versions.
  */
 
-const ASSET_V = '20261113a'; // bump after changing css/ or js/
+const ASSET_V = '20261113b'; // bump after changing css/ or js/
 
 /**
  * <!DOCTYPE> through the header.

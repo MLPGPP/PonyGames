@@ -9,6 +9,7 @@ declare(strict_types=1);
 require __DIR__ . '/inc/auth.php';
 require __DIR__ . '/inc/layout.php';
 
+$me = current_user(); // logged in: tips go under the account's name
 render_page_start('Bounty Board: missing pony games', 'bounties', 'The Pony Games bounty board: pony fan games we know existed but can\'t find. Seen one of these? Help bring it back, dead or alive!', false, [
     'canonical' => '/bounties'
 ]);
@@ -70,9 +71,14 @@ render_page_start('Bounty Board: missing pony games', 'bounties', 'The Pony Game
         <textarea name="notes" rows="3" maxlength="2000" placeholder="Version, file name, who might still have it…"></textarea>
       </label>
       <div class="bounty-form__row">
+<?php if ($me): ?>
+        <p class="post-form__field bounty-form__as"><span>Sending as <b><?= h($me['display_name']) ?></b></span>
+          <span class="bounty-form__opt">we'll let you know under the bell what came of it</span></p>
+<?php else: ?>
         <label class="post-form__field"><span>Your name <span class="bounty-form__opt">(optional)</span></span>
           <input name="name" maxlength="60" autocomplete="nickname" placeholder="So we can credit you" />
         </label>
+<?php endif ?>
         <label class="post-form__field"><span>Contact <span class="bounty-form__opt">(optional)</span></span>
           <input name="contact" maxlength="120" placeholder="Discord, email… if we may ask more" />
         </label>

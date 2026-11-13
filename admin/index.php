@@ -47,8 +47,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             header('Location: ./'); exit;
         }
         switch ($do) {
-            case 'resolve': $pdo->prepare('UPDATE reports SET resolved = 1 WHERE id = ?')->execute([$id]); break;
-            case 'reopen':  $pdo->prepare('UPDATE reports SET resolved = 0 WHERE id = ?')->execute([$id]); break;
+            case 'handle': // a report: what happens to the post, and a message to the reporter (and the writer)
+                $_SESSION['admin_flash'] = handle_report($id, (string)($_POST['action'] ?? 'none'),
+                    (string)($_POST['reporter_note'] ?? ''), (string)($_POST['author_note'] ?? ''));
+                header('Location: ./?view=reports'); exit;
+            case 'reopen':  $pdo->prepare("UPDATE reports SET resolved = 0, action = '', reporter_note = '', author_note = '', resolved_at = NULL, resolved_by = '' WHERE id = ?")->execute([$id]); break;
             case 'hide':    $pdo->prepare('UPDATE posts SET hidden = 1 WHERE id = ?')->execute([$id]); break;
             case 'show':    $pdo->prepare('UPDATE posts SET hidden = 0 WHERE id = ?')->execute([$id]); break;
             case 'delete':
@@ -191,6 +194,45 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                         $pdo->prepare('INSERT OR IGNORE INTO user_badges (user_id, badge, note, awarded_at) VALUES (?, ?, ?, ?)')
                             ->execute([$uid, $badge, '', time()]);
                     }
+                    // tell the member (bell + daily email); not for submissions without an account
+                    if ($uid) {
+                        $sd = json_decode($sub['data'], true) ?: [];
+                        $isEdit = $sub['kind'] === 'edit';
+                        $gid = $isEdit ? (string)$sub['game_id'] : (string)($newId ?? '');
+                        $games2 = all_games();
+                        $name = $isEdit ? (string)($games2[$gid]['title'] ?? 'a game') : (string)($sd['values']['title'] ?? 'your game');
+                        $live = $accepted && $gid !== '' && isset($games2[$gid]);
+                        $reply = mb_substr(trim((string)($_POST['reply'] ?? '')), 0, 500);
+                        $body = $reply !== '' ? $reply : ($accepted
+                            ? ($isEdit ? 'Thanks for helping keep the info right!' : ($live ? 'It\'s on the site now. Thanks for sharing it!' : 'It will be on the site soon. Thanks for sharing it!'))
+                            : 'Sorry, it couldn\'t be added this time.');
+                        $earned = [];
+                        if ($accepted && $stars) $earned[] = $stars . ' gold star' . ($stars === 1 ? '' : 's');
+                        if ($accepted && isset(BADGES[$badge])) $earned[] = 'the ' . BADGES[$badge][0] . ' badge';
+                        if ($earned) $body .= ' You earned ' . implode(' and ', $earned) . '.';
+                        $title = $accepted
+                            ? ($isEdit ? 'Your correction to “' . $name . '” was accepted' : 'Your game “' . $name . '” was accepted 🎉')
+                            : ($isEdit ? 'Your correction to “' . $name . '” wasn\'t accepted' : 'Your submission “' . $name . '” wasn\'t accepted');
+                        notify_submission($uid, $gid, $title, $body, $id, $live ? game_path($games2[$gid]) : '/account#submissions');
+                    }
+                    // to the moderators' Discord channel, if set up (inc/discord.php)
+                    $sd = json_decode($sub['data'], true) ?: [];
+                    $isEdit = $sub['kind'] === 'edit';
+                    $gidD = $isEdit ? (string)$sub['game_id'] : (string)($newId ?? '');
+                    $gamesD = all_games();
+                    $rewards = [];
+                    if ($accepted && $uid && $stars) $rewards[] = $stars . ' gold star' . ($stars === 1 ? '' : 's');
+                    if ($accepted && $uid && isset(BADGES[$badge])) $rewards[] = BADGES[$badge][2] . ' ' . BADGES[$badge][0] . ' badge';
+                    $memberSt = $pdo->prepare('SELECT display_name FROM users WHERE id = ?');
+                    $memberSt->execute([$uid]);
+                    $member = $uid ? (string)($memberSt->fetchColumn() ?: 'a deleted account') : ((string)($sub['name'] ?? '') !== '' ? $sub['name'] . ' (no account)' : 'someone without an account');
+                    discord_submission_done($id, [
+                        'accepted' => $accepted, 'edit' => $isEdit,
+                        'name' => $isEdit ? (string)($gamesD[$gidD]['title'] ?? 'game #' . $gidD) : (string)($sd['values']['title'] ?? 'untitled'),
+                        'game_id' => $gidD, 'live' => $accepted && $gidD !== '' && isset($gamesD[$gidD]),
+                        'reply' => mb_substr(trim((string)($_POST['reply'] ?? '')), 0, 500), 'notified' => $uid > 0,
+                        'rewards' => implode(' and ', $rewards), 'by' => admin_who(), 'member' => $member, 'published' => $published !== '',
+                    ]);
                     $_SESSION['admin_flash'] = !$accepted ? 'Marked as rejected.'
                         : ($published !== '' ? "Accepted and published “{$published}” to games.json." . $pubNote : 'Marked as accepted. Don\'t forget to put the JSON in games.json!');
                 }
@@ -247,7 +289,7 @@ $form = function (string $do, int $id, string $label, string $view, bool $danger
 <meta name="robots" content="noindex, nofollow">
 <title>Moderation | Pony Games</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Silkscreen&amp;display=swap">
-<link rel="stylesheet" href="admin.css?v=23">
+<link rel="stylesheet" href="admin.css?v=26">
 </head>
 <body>
 <?php if (empty($_SESSION['admin'])): ?>
@@ -270,7 +312,7 @@ $form = function (string $do, int $id, string $label, string $view, bool $danger
     <button>Log in</button>
   </form>
 <?php else:
-  $view = in_array($_GET['view'] ?? '', ['reports', 'resolved', 'posts', 'users', 'user', 'submissions', 'submission'], true) ? $_GET['view'] : 'reports';
+  $view = in_array($_GET['view'] ?? '', ['reports', 'resolved', 'report', 'posts', 'users', 'user', 'submissions', 'submission'], true) ? $_GET['view'] : 'reports';
   if (in_array($view, ['users', 'user'], true) && !admin_can_manage_accounts()) $view = 'reports';
   $pdo = db();
   $openCount = (int)$pdo->query('SELECT COUNT(*) FROM reports WHERE resolved = 0')->fetchColumn();
@@ -278,7 +320,7 @@ $form = function (string $do, int $id, string $label, string $view, bool $danger
 ?>
   <?php admin_nav($view, ['reports' => $openCount, 'submissions' => $subCount]); ?>
   <main>
-  <?php $pageTitle = ['reports' => 'Reports', 'resolved' => 'Reports', 'submissions' => 'Submissions', 'posts' => 'Reviews &amp; discussion', 'users' => 'Accounts'][$view] ?? '';
+  <?php $pageTitle = ['reports' => 'Reports', 'resolved' => 'Reports', 'report' => 'Report', 'submissions' => 'Submissions', 'posts' => 'Reviews &amp; discussion', 'users' => 'Accounts'][$view] ?? '';
     if ($pageTitle !== ''): ?><h2 class="page-title"><?= $pageTitle ?></h2><?php endif ?>
   <?php if (!empty($_SESSION['admin_flash'])): ?><p class="flash"><?= h($_SESSION['admin_flash']) ?></p><?php unset($_SESSION['admin_flash']); endif ?>
   <?php // security check (inc/admin_ui.php): private files that can be downloaded from outside
@@ -606,6 +648,74 @@ $form = function (string $do, int $id, string $label, string $view, bool $danger
       </div>
     </div>
     <?php endif ?>
+  <?php elseif ($view === 'report'):
+    $st = $pdo->prepare('SELECT r.*, u.display_name AS reporter FROM reports r LEFT JOIN users u ON u.id = r.user_id WHERE r.id = ?');
+    $st->execute([(int)($_GET['id'] ?? 0)]);
+    $rep = $st->fetch();
+    $post = null;
+    if ($rep && $rep['post_id']) {
+        $st = $pdo->prepare('SELECT p.*, u.display_name AS member FROM posts p LEFT JOIN users u ON u.id = p.user_id WHERE p.id = ?');
+        $st->execute([(int)$rep['post_id']]);
+        $post = $st->fetch() ?: null;
+    }
+    // other open reports about the same post are answered together with this one
+    $all = [];
+    if ($rep) {
+        $st = $post
+            ? $pdo->prepare('SELECT r.*, u.display_name AS reporter FROM reports r LEFT JOIN users u ON u.id = r.user_id WHERE r.resolved = 0 AND r.post_id = ? ORDER BY r.created_at')
+            : $pdo->prepare('SELECT r.*, u.display_name AS reporter FROM reports r LEFT JOIN users u ON u.id = r.user_id WHERE r.id = ?');
+        $st->execute([$post ? (int)$post['id'] : (int)$rep['id']]);
+        $all = $st->fetchAll() ?: [$rep];
+    }
+    $withAccount = array_unique(array_filter(array_map(fn($r) => (int)($r['user_id'] ?? 0), $all), fn($u) => $u > 0 && (!$post || $u !== (int)($post['user_id'] ?? 0))));
+    $what = $post ? ($post['kind'] === 'comment' ? 'discussion message' : 'review') : '';
+    ?>
+    <p><a href="?view=reports">← All open reports</a></p>
+    <?php if (!$rep): ?><p class="empty">This report doesn't exist anymore.</p>
+    <?php elseif ((int)$rep['resolved']): ?><p class="empty">This report was already handled. <a href="?view=resolved">See resolved reports</a></p>
+    <?php else: ?>
+    <div class="cols">
+      <div class="panel">
+        <h3><?= count($all) > 1 ? count($all) . ' reports' : 'The report' ?> <span class="muted">on <?= $gameLink((string)$rep['game_id']) ?></span></h3>
+        <ul class="report-list">
+        <?php foreach ($all as $r): ?>
+          <li><strong><?= h($r['reason']) ?></strong> <span class="muted">· <?= $when((int)$r['created_at']) ?> · <?= $r['reporter'] !== null ? 'by ' . h((string)$r['reporter']) : 'without an account' ?></span>
+            <?= $r['details'] !== '' ? '<br>' . h($r['details']) : '' ?></li>
+        <?php endforeach ?>
+        </ul>
+        <h3>Reported <?= $post ? $what : ($rep['post_id'] ? 'post' : 'page') ?></h3>
+        <?php if ($post): ?>
+          <p><strong><?= h($post['name']) ?></strong> <span class="muted"><?= $post['member'] !== null ? '(account)' : '(no account, gets no message)' ?><?= (int)$post['hidden'] ? ' · hidden now' . (count($all) >= 3 ? ', by the reports' : '') : '' ?><?= $post['rating'] ? ' · ' . str_repeat('★', (int)$post['rating']) : '' ?></span></p>
+          <p class="body report-post"><?= nl2br(h($post['body'])) ?></p>
+        <?php elseif ($rep['post_id']): ?><p class="muted">The post was deleted already.</p>
+        <?php else: ?><p class="muted">The game page itself, not a review or message.</p><?php endif ?>
+      </div>
+      <div class="panel">
+        <h3>Handle it</h3>
+        <form method="post" class="stack report-form">
+          <input type="hidden" name="csrf" value="<?= h($csrf) ?>"><input type="hidden" name="do" value="handle">
+          <input type="hidden" name="id" value="<?= (int)$rep['id'] ?>"><input type="hidden" name="view" value="reports">
+          <?php if ($post): ?>
+          <fieldset class="report-actions"><legend>What happens to the <?= $what ?></legend>
+            <label class="check"><input type="radio" name="action" value="none" checked> No action<?= (int)$post['hidden'] ? ': show it again' : ': it stays' ?></label>
+            <label class="check"><input type="radio" name="action" value="hide"> <?= (int)$post['hidden'] ? 'Keep it hidden' : 'Hide it' ?></label>
+            <label class="check"><input type="radio" name="action" value="delete"> Delete it for good</label>
+          </fieldset>
+          <?php else: ?><input type="hidden" name="action" value="none"><?php endif ?>
+          <?php if ($withAccount): ?>
+          <label>Message to <?= count($withAccount) === 1 ? 'the reporter' : 'the ' . count($withAccount) . ' reporters' ?> <span class="muted">shows up in their notifications</span>
+            <textarea name="reporter_note" rows="3" maxlength="500" placeholder="e.g. Thanks! We removed it, it was spam."></textarea></label>
+          <?php else: ?><p class="muted">Reported without an account, so the reporter can't get a message.</p><?php endif ?>
+          <?php if ($post && (int)($post['user_id'] ?? 0) > 0 && $post['member'] !== null): ?>
+          <label class="report-author">Message to <?= h((string)$post['member']) ?>, who wrote it <span class="muted">only sent when you hide or delete it</span>
+            <textarea name="author_note" rows="3" maxlength="500" placeholder="e.g. Please keep reviews about the game, see rule #2."></textarea></label>
+          <?php endif ?>
+          <p class="muted">Leave a message empty for a short standard text.<?= count($all) > 1 ? ' This closes all ' . count($all) . ' reports about this post.' : '' ?></p>
+          <div><button class="primary">Done</button></div>
+        </form>
+      </div>
+    </div>
+    <?php endif ?>
   <?php elseif ($view === 'posts'):
     // ?user=12: only the posts of one account (from its Manage page)
     $onlyUser = (int)($_GET['user'] ?? 0);
@@ -639,12 +749,12 @@ $form = function (string $do, int $id, string $label, string $view, bool $danger
     echo '<p class="subnav"><a href="?view=reports" class="' . ($view === 'reports' ? 'on' : '') . '">Open</a><a href="?view=resolved" class="' . ($view === 'resolved' ? 'on' : '') . '">Resolved</a></p>';
     $st = $pdo->prepare('SELECT r.*, p.body AS post_body, p.name AS post_name, p.kind AS post_kind, p.hidden AS post_hidden
                          FROM reports r LEFT JOIN posts p ON p.id = r.post_id
-                         WHERE r.resolved = ? ORDER BY r.created_at DESC LIMIT 200');
+                         WHERE r.resolved = ? ORDER BY ' . ($view === 'resolved' ? 'COALESCE(r.resolved_at, r.created_at)' : 'r.created_at') . ' DESC LIMIT 200');
     $st->execute([$view === 'resolved' ? 1 : 0]);
     $rows = $st->fetchAll();
     if (!$rows): ?><p class="empty"><?= $view === 'resolved' ? 'Nothing resolved yet.' : 'No open reports. All quiet in Equestria!' ?></p><?php else: ?>
     <table>
-      <tr><th>When</th><th>Game</th><th>Reason</th><th>Details</th><th>Reported post</th><th></th></tr>
+      <tr><th>When</th><th>Game</th><th>Reason</th><th>Details</th><th>Reported post</th><?= $view === 'resolved' ? '<th>Outcome</th>' : '' ?><th></th></tr>
       <?php foreach ($rows as $r): ?>
         <tr>
           <td class="muted"><?= $when((int)$r['created_at']) ?></td>
@@ -655,13 +765,14 @@ $form = function (string $do, int $id, string $label, string $view, bool $danger
             <?php if ($r['post_body'] === null): ?><span class="muted">(deleted)</span>
             <?php else: ?><strong><?= h($r['post_name']) ?></strong> <span class="muted"><?= $r['post_kind'] === 'comment' ? 'discussion' : 'review' ?><?= $r['post_hidden'] ? ', hidden' : '' ?></span><br><?= h($r['post_body']) ?><?php endif ?>
           <?php else: ?><span class="muted">the game page itself</span><?php endif ?></td>
-          <td class="acts">
-            <?php if ($r['post_id'] && $r['post_body'] !== null): ?>
-              <?= $r['post_hidden'] ? $form('show', (int)$r['post_id'], 'Show post', $view) : $form('hide', (int)$r['post_id'], 'Hide post', $view) ?>
-              <?= $form('delete', (int)$r['post_id'], 'Delete post', $view, true) ?>
-            <?php endif ?>
-            <?= $view === 'resolved' ? $form('reopen', (int)$r['id'], 'Reopen', $view) : $form('resolve', (int)$r['id'], 'Resolve', $view) ?>
-          </td>
+          <?php if ($view === 'resolved'): ?>
+          <td class="body"><?= h(REPORT_ACTIONS[$r['action']] ?? 'Closed') ?><?= $r['resolved_by'] !== '' ? ' <span class="muted">by ' . h($r['resolved_by']) . '</span>' : '' ?>
+            <?= $r['reporter_note'] !== '' ? '<br><span class="muted">To reporter:</span> ' . h($r['reporter_note']) : '' ?>
+            <?= $r['author_note'] !== '' ? '<br><span class="muted">To writer:</span> ' . h($r['author_note']) : '' ?></td>
+          <td class="acts"><?= $form('reopen', (int)$r['id'], 'Reopen', $view) ?></td>
+          <?php else: ?>
+          <td class="acts"><a class="button primary" href="?view=report&amp;id=<?= (int)$r['id'] ?>">Handle</a></td>
+          <?php endif ?>
         </tr>
       <?php endforeach ?>
     </table>

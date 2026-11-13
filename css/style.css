@@ -3881,6 +3881,7 @@ body.gf-locked {
 .bounty-form__intro { margin: 0; color: var(--color-text-muted); line-height: 1.55; font-size: 0.92rem; }
 .bounty-form__row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
 .bounty-form__opt { font-weight: 400; color: var(--color-text-muted); }
+.bounty-form__as { display: flex; flex-direction: column; gap: 0.15rem; align-self: end; margin: 0 0 0.55rem; }
 .bounty-form__privacy { margin: 0; font-size: 0.78rem; color: var(--color-text-muted); }
 .bounty-form [hidden] { display: none; }
 @media (max-width: 560px) { .bounty-form__row { grid-template-columns: 1fr; } .bounty-form { padding: 1.3rem 1.1rem 1.1rem; } }

@@ -8,6 +8,13 @@
  *   them a notification; a second change within 6 hours updates the unread one.
  * - notify_reply(): someone answered a member's message; more replies to the
  *   same message while it's unread update that notification.
+ * - notify_moderation(): a moderator handled a report; the reporter, and the
+ *   writer of the post if something was done about it, get the moderator's
+ *   message. These always show under the bell, whatever the settings say.
+ * - notify_submission(): a submitted game or correction was accepted or
+ *   rejected; same as above, always under the bell.
+ * - notify_tip(): about a bounty tip: a moderator answered it, the suggested
+ *   bounty is on the board now, or the game it was about was found.
  * - Email: one daily summary (send_daily_digests()) with everything new and
  *   still unread, of the kinds the member chose. It goes out once a day after
  *   DIGEST_HOUR (Amsterdam time): started by the first visit after that hour
@@ -135,6 +142,61 @@ function notify_reply(array $target, array $reply, array $actor, array $game): v
     }
 }
 
+/**
+ * A message from the moderators (kind 'mod'): about a report the member made,
+ * or about their own post that was reported. $postId: link to that post (only
+ * when it can still be seen). Shown under the bell even when the member turned
+ * the bell off; in the daily email when they get that.
+ */
+function notify_moderation(int $uid, string $gid, string $title, string $body, int $reportId, ?int $postId = null): void
+{
+    if ($uid <= 0) return;
+    try {
+        db()->prepare("INSERT INTO notifications (user_id, game_id, title, body, created_at, kind, ref_id, post_id) VALUES (?, ?, ?, ?, ?, 'mod', ?, ?)")
+            ->execute([$uid, $gid, $title, $body, time(), $reportId, $postId]);
+    } catch (Throwable $e) {
+        error_log('notify moderation: ' . $e->getMessage());
+    }
+}
+
+/**
+ * A submission was accepted or rejected (kind 'sub'). $link: the game page when
+ * it's on the site, otherwise the member's list of submissions.
+ */
+function notify_submission(int $uid, string $gid, string $title, string $body, int $subId, string $link): void
+{
+    notify_linked('sub', $uid, $gid, $title, $body, $subId, $link);
+}
+
+/**
+ * About a bounty tip (kind 'tip', ref_id = the tip). $link: the found game, or
+ * the bounty board. $gid: the found game, if any (for its picture).
+ */
+function notify_tip(int $uid, string $title, string $body, int $tipId, string $link = '/bounties', string $gid = ''): void
+{
+    notify_linked('tip', $uid, $gid, $title, $body, $tipId, $link);
+}
+
+/** A notification with its own link (kinds 'sub' and 'tip'). */
+function notify_linked(string $kind, int $uid, string $gid, string $title, string $body, int $refId, string $link): void
+{
+    if ($uid <= 0) return;
+    try {
+        db()->prepare('INSERT INTO notifications (user_id, game_id, title, body, created_at, kind, ref_id, link) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+            ->execute([$uid, $gid, $title, $body, time(), $kind, $refId, $link]);
+    } catch (Throwable $e) {
+        error_log('notify ' . $kind . ': ' . $e->getMessage());
+    }
+}
+
+/** Unread messages from the moderators: these make the bell show up even when it's turned off. */
+function moderation_unread(int $uid): int
+{
+    $st = db()->prepare("SELECT COUNT(*) FROM notifications WHERE user_id = ? AND kind IN ('mod', 'sub', 'tip') AND read_at IS NULL");
+    $st->execute([$uid]);
+    return (int)$st->fetchColumn();
+}
+
 /** A short one-line version of a message for the bell. */
 function reply_snippet(string $body, int $max = 140): string
 {
@@ -217,7 +279,7 @@ function send_daily_digests(): int
                          LEFT JOIN users a ON a.id = n.actor_id
                          WHERE n.emailed_at IS NULL AND n.read_at IS NULL AND n.created_at > ?
                            AND u.notify_email = 1 AND u.email_verified = 1 AND u.email <> ''
-                           AND ((n.kind = 'update' AND u.notify_updates = 1) OR (n.kind = 'reply' AND u.notify_replies = 1))
+                           AND ((n.kind = 'update' AND u.notify_updates = 1) OR (n.kind = 'reply' AND u.notify_replies = 1) OR n.kind IN ('mod', 'sub', 'tip'))
                            AND " . NOTIFICATION_LIVE_SQL . "
                          ORDER BY n.user_id, n.created_at DESC");
     $st->execute([$since]);
@@ -248,14 +310,20 @@ function send_digest_email(array $user, array $items, array $games): bool
     $site = request_origin();
     $e = fn(string $t) => htmlspecialchars($t, ENT_QUOTES | ENT_HTML5, 'UTF-8');
     $name = (string)$user['display_name'];
-    $updates = array_values(array_filter($items, fn($n) => $n['kind'] !== 'reply'));
+    $updates = array_values(array_filter($items, fn($n) => $n['kind'] === 'update'));
     $replies = array_values(array_filter($items, fn($n) => $n['kind'] === 'reply'));
+    $mod = array_values(array_filter($items, fn($n) => $n['kind'] === 'mod'));
+    $subs = array_values(array_filter($items, fn($n) => $n['kind'] === 'sub'));
+    $tips = array_values(array_filter($items, fn($n) => $n['kind'] === 'tip'));
     $font = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
     $count = fn(int $n, string $one, string $more) => $n . ' ' . ($n === 1 ? $one : $more);
 
     $parts = [];
     if ($updates) $parts[] = $count(count($updates), 'game update', 'game updates');
     if ($replies) $parts[] = $count(count($replies), 'reply', 'replies');
+    if ($subs) $parts[] = $count(count($subs), 'submission checked', 'submissions checked');
+    if ($tips) $parts[] = $count(count($tips), 'bounty update', 'bounty updates');
+    if ($mod) $parts[] = $count(count($mod), 'message from the moderators', 'messages from the moderators');
     $subject = 'Your Pony Games summary: ' . implode(', ', $parts);
 
     $text = "Hi $name!\n\nHere's what happened since your last summary.\n";
@@ -281,6 +349,13 @@ function send_digest_email(array $user, array $items, array $games): bool
     };
     $gameLink = fn(string $gid, string $hash = '') => isset($games[$gid]) ? $site . game_path($games[$gid]) . $hash : $site . '/games';
     $gameTitle = fn(string $gid, string $fallback) => (string)($games[$gid]['title'] ?? $fallback);
+    $section('Your submissions', $subs, fn($n) => [(string)$n['title'], (string)$n['body'], $site . (string)$n['link']]);
+    $section('Bounty board', $tips, fn($n) => [(string)$n['title'], (string)$n['body'], $site . (string)$n['link']]);
+    $section('From the moderators', $mod, fn($n) => [
+        (string)$n['title'] . ' on ' . $gameTitle((string)$n['game_id'], 'a game'),
+        (string)$n['body'],
+        $gameLink((string)$n['game_id'], $n['post_id'] ? '#post-' . (int)$n['post_id'] : ''),
+    ]);
     $section('Games you bookmarked', $updates, fn($n) => [$gameTitle((string)$n['game_id'], (string)$n['title']), (string)$n['body'], $gameLink((string)$n['game_id'])]);
     $section('Replies to your messages', $replies, fn($n) => [
         (string)$n['title'] . ' on ' . $gameTitle((string)$n['game_id'], 'a game'),

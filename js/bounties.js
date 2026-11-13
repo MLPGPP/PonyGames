@@ -120,8 +120,9 @@
       : "Where can it be found?";
     submitBtn.textContent = isNew ? "Post bounty" : "Send tip";
     try {
+      // the name from an earlier tip; not for members, they send under their account's name
       const saved = localStorage.getItem("pg-post-name");
-      if (saved) form.elements.name.value = saved;
+      if (saved && form.elements.name) form.elements.name.value = saved;
     } catch (e) {}
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");

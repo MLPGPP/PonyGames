@@ -223,7 +223,7 @@ render_page_start($tab === 'settings' ? 'Settings' : 'Your account');
       </ul>
     </section>
 
-    <section class="account-section">
+    <section class="account-section" id="submissions">
       <div class="section-head">
         <h2 class="section-title">Your submissions</h2>
         <div class="section-head__links"><a class="section-head__link" href="/submit">Submit a game →</a></div>
@@ -312,6 +312,7 @@ render_page_start($tab === 'settings' ? 'Settings' : 'Your account');
             <label class="settings-check"><input type="checkbox" name="notify_site" value="1"<?= (int)($user['notify_site'] ?? 1) ? ' checked' : '' ?>> <span>Under the bell <span aria-hidden="true">🔔</span> on the site</span></label>
             <label class="settings-check"><input type="checkbox" name="notify_email" value="1"<?= (int)($user['notify_email'] ?? 1) ? ' checked' : '' ?>> <span>By email <span class="muted">(one summary a day, around 9:00 Amsterdam time, only when something happened<?= mail_enabled() && !$user['email_verified'] ? '; once your email address is confirmed' : '' ?>)</span></span></label>
           </fieldset>
+          <p class="settings-card__text muted">Messages from the moderators about your reports or your posts always show up under the bell.</p>
           <button class="btn btn--accent">Save</button>
         </form>
       </section>

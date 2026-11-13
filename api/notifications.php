@@ -2,7 +2,9 @@
 /**
  * The notification bell (js/main.js).
  *   GET  /api/notifications.php                      -> { unread, items: [{ id, kind, game, title, body, link, thumb, at, read }] }
- *        kind "update": a bookmarked game changed; "reply": someone answered your message
+ *        kind "update": a bookmarked game changed; "reply": someone answered your message;
+ *        "mod": a message from the moderators about a report; "sub": a submission was accepted or rejected;
+ *        "tip": about a bounty tip (answered, now a bounty, or the game was found)
  *   POST /api/notifications.php { action: "read", id }  -> { unread }   one notification read
  *   POST /api/notifications.php { action: "read-all" }  -> { unread }   all read
  * Only for the logged-in member; the newest 20 are listed.
@@ -50,6 +52,36 @@ try {
     $items = [];
     foreach ($st->fetchAll() as $n) {
         $g = $games[(string)$n['game_id']] ?? null;
+        if ($n['kind'] === 'sub' || $n['kind'] === 'tip') {
+            $items[] = [
+                'id' => (int)$n['id'],
+                'kind' => $n['kind'],
+                'game' => (string)$n['game_id'],
+                'title' => (string)$n['title'],
+                'body' => (string)$n['body'],
+                'link' => (string)($n['link'] ?: ($n['kind'] === 'tip' ? '/bounties' : '/account#submissions')),
+                'thumb' => $g['thumbnail'] ?? '/assets/mascot-head.png',
+                'avatar_color' => null,
+                'at' => (int)$n['created_at'],
+                'read' => $n['read_at'] !== null,
+            ];
+            continue;
+        }
+        if ($n['kind'] === 'mod') {
+            $items[] = [
+                'id' => (int)$n['id'],
+                'kind' => 'mod',
+                'game' => (string)$n['game_id'],
+                'title' => (string)$n['title'],
+                'body' => 'On ' . ($g['title'] ?? 'a game') . ': ' . $n['body'],
+                'link' => $g ? game_path($g) . ($n['post_id'] ? '#post-' . (int)$n['post_id'] : '') : null,
+                'thumb' => '/assets/mascot-head.png',
+                'avatar_color' => null,
+                'at' => (int)$n['created_at'],
+                'read' => $n['read_at'] !== null,
+            ];
+            continue;
+        }
         $isReply = $n['kind'] === 'reply';
         $items[] = [
             'id' => (int)$n['id'],

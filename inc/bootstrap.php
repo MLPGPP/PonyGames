@@ -451,13 +451,17 @@ function db(): PDO
         created_at INTEGER NOT NULL,
         created_by TEXT NOT NULL DEFAULT \'\'
     )');
-    // kind 'update' (a bookmarked game changed) or 'reply' (someone answered your message:
-    // ref_id = your message, post_id = the newest reply, actor_id = who replied)
+    // kind 'update' (a bookmarked game changed), 'reply' (someone answered your message:
+    // ref_id = your message, post_id = the newest reply, actor_id = who replied) or 'mod'
+    // (a moderator handled your report, or a report about your post: ref_id = the report) or 'sub'
+    // (your submission was accepted or rejected: ref_id = the submission, link = where to look) or 'tip'
+    // (about your bounty tip: ref_id = the tip, link = where to look)
     $ncols = array_column($pdo->query('PRAGMA table_info(notifications)')->fetchAll(), 'name');
     if (!in_array('kind', $ncols, true)) $pdo->exec("ALTER TABLE notifications ADD COLUMN kind TEXT NOT NULL DEFAULT 'update'");
     if (!in_array('ref_id', $ncols, true)) $pdo->exec('ALTER TABLE notifications ADD COLUMN ref_id INTEGER');
     if (!in_array('post_id', $ncols, true)) $pdo->exec('ALTER TABLE notifications ADD COLUMN post_id INTEGER');
     if (!in_array('actor_id', $ncols, true)) $pdo->exec('ALTER TABLE notifications ADD COLUMN actor_id INTEGER');
+    if (!in_array('link', $ncols, true)) $pdo->exec('ALTER TABLE notifications ADD COLUMN link TEXT'); // kind 'sub': where it goes
     if (!in_array('ban_until', $cols, true)) $pdo->exec('ALTER TABLE users ADD COLUMN ban_until INTEGER');
     if (!in_array('ban_reason', $cols, true)) $pdo->exec("ALTER TABLE users ADD COLUMN ban_reason TEXT NOT NULL DEFAULT ''");
     $pdo->exec('CREATE TABLE IF NOT EXISTS user_bans (
@@ -469,8 +473,23 @@ function db(): PDO
         by_who TEXT NOT NULL DEFAULT \'\',
         lifted_at INTEGER                   -- set when a moderator lifts it early
     )');
+    // a moderator's answer to a bounty tip (admin/bounties.php): outcome 'helpful' or 'no', the message to the tipper
+    $tcols = array_column($pdo->query('PRAGMA table_info(bounty_tips)')->fetchAll(), 'name');
+    if (!in_array('outcome', $tcols, true)) $pdo->exec("ALTER TABLE bounty_tips ADD COLUMN outcome TEXT NOT NULL DEFAULT ''");
+    if (!in_array('reply', $tcols, true)) $pdo->exec("ALTER TABLE bounty_tips ADD COLUMN reply TEXT NOT NULL DEFAULT ''");
+    if (!in_array('resolved_at', $tcols, true)) $pdo->exec('ALTER TABLE bounty_tips ADD COLUMN resolved_at INTEGER');
+    if (!in_array('resolved_by', $tcols, true)) $pdo->exec("ALTER TABLE bounty_tips ADD COLUMN resolved_by TEXT NOT NULL DEFAULT ''");
+    // a suggested bounty that was put on the board: its id there (the suggester hears when it's found)
+    if (!in_array('made_bounty', $tcols, true)) $pdo->exec('ALTER TABLE bounty_tips ADD COLUMN made_bounty TEXT');
     $cols = array_column($pdo->query('PRAGMA table_info(reports)')->fetchAll(), 'name');
     if (!in_array('user_id', $cols, true)) $pdo->exec('ALTER TABLE reports ADD COLUMN user_id INTEGER');
+    // how a moderator handled it (admin/index.php ?view=report): action 'none', 'hide' or 'delete',
+    // and the messages that went to the reporter and to the writer of the post
+    if (!in_array('action', $cols, true)) $pdo->exec("ALTER TABLE reports ADD COLUMN action TEXT NOT NULL DEFAULT ''");
+    if (!in_array('reporter_note', $cols, true)) $pdo->exec("ALTER TABLE reports ADD COLUMN reporter_note TEXT NOT NULL DEFAULT ''");
+    if (!in_array('author_note', $cols, true)) $pdo->exec("ALTER TABLE reports ADD COLUMN author_note TEXT NOT NULL DEFAULT ''");
+    if (!in_array('resolved_at', $cols, true)) $pdo->exec('ALTER TABLE reports ADD COLUMN resolved_at INTEGER');
+    if (!in_array('resolved_by', $cols, true)) $pdo->exec("ALTER TABLE reports ADD COLUMN resolved_by TEXT NOT NULL DEFAULT ''");
     return $pdo;
 }
 

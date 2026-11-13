@@ -62,7 +62,8 @@ server config. The stats count old and new as one page.
                       games.php + resources.php (edit the content)
     inc/              shared PHP (bootstrap.php: data, database; auth.php: accounts;
                       submissions.php, content.php: editing games.json/resources.json;
-                      layout.php: header/footer)
+                      layout.php: header/footer; notify.php: bell + daily email;
+                      discord.php: posts for the moderators' Discord channel)
     router.php        for `php -S` only; production uses deploy/nginx-ponygames.conf
     css/style.css     all styles
     js/main.js        cards (+ hover card), filters, news, jam history
@@ -167,6 +168,14 @@ picture, mark as found and link the game). By hand it works like this:
 when a game is found, add it to games.json, then set `"status": "found"`,
 `"foundGameId": "<its id in games.json>"` and optionally `"foundBy": "name"`.
 The poster gets a FOUND stamp and links to the game's page.
+
+**Answering tips.** In /admin/bounties.php every open tip has **✓ Answer & close ▾**:
+choose *Helpful* or *Not what we needed*, write a message and give gold stars
+(members only). The member sees it under the bell 🔔 and in their daily email
+(empty message: a short standard text). They also hear about it when their
+suggestion becomes a bounty (**Make a bounty of this**), when they get **+1 ★**,
+and when a bounty they sent a tip for is marked as **found** (with a link to
+the game when it's on the site).
 
 ## Submissions (new games and corrections)
 
@@ -430,6 +439,28 @@ To have it on time even when nobody visits, add a cron job:
 (`--force` sends again right away; only what wasn't mailed yet.) The `cron/`
 folder is blocked for web visitors in the nginx config.
 
+## Discord channel for the moderators
+
+With `DISCORD_WEBHOOK_REPORTS` and `DISCORD_WEBHOOK_SUBMISSIONS` in `.env`
+(see `.env.example`), the site posts in a Discord text channel
+(`inc/discord.php`):
+
+- **Reports channel**: every new report (game, reason, details, who reported
+  it, the reported text, and whether it was hidden automatically), and when a
+  moderator handles it: what was done, by whom, and the messages that went out.
+- **Submissions channel**: every new game or correction (who sent it, what
+  changed), and when it's accepted or rejected: by whom, the reply, stars or
+  badge, and whether it's on the site yet.
+- **Bounties channel** (`DISCORD_WEBHOOK_BOUNTIES`; empty = the submissions
+  channel): every new tip or suggested bounty, a tip closed or deleted, a
+  suggestion turned into a bounty, and a bounty marked as found.
+
+Each message links to the right page in /admin. Mentions like `@everyone` in
+what visitors wrote don't ping anyone. The message goes out after the page
+was sent, so Discord never slows down the site. To make a webhook: channel
+settings → Integrations → Webhooks → New Webhook → Copy Webhook URL. Keep the
+URL private: anyone who has it can post in that channel.
+
 ## Google Sheet tab
 
 After every change to `games.json` (admin saves, accepted submissions,
@@ -472,6 +503,13 @@ One-time setup:
    Back that file up: it holds all accounts, likes, reviews, discussion messages, reports and submissions.
 4. Moderate at https://pony.games/admin/. Posts reported by 3 different
    people are hidden automatically until a moderator looks at them.
+   **Handle** on a report: choose no action, hide or delete, and write a
+   message to the reporter and (when you hide or delete) to the writer.
+   It shows up under their bell and in their daily email; an empty message
+   gets a short standard text. All open reports about the same post are
+   closed together. "No action" on a post hidden by reports shows it again.
+   Accepting or rejecting a submission also tells the member (bell + daily
+   email), with your reply, or a short standard text, and any stars or badge.
 
 Privacy: visitors without an account get an anonymous cookie (to remember
 their likes), and IP addresses are only stored as salted hashes for rate

@@ -22,7 +22,8 @@ try {
     $u = current_user();
     $out = $u ? ['user' => public_user($u), 'bookmarks' => user_bookmarks((int)$u['id'])] : ['user' => null];
     if ($u) {
-        $out['notifications'] = ['on' => (bool)(int)($u['notify_site'] ?? 1), 'unread' => notifications_unread((int)$u['id'])];
+        // the bell also shows up (even when turned off) for an unread message from the moderators
+        $out['notifications'] = ['on' => (int)($u['notify_site'] ?? 1) === 1 || moderation_unread((int)$u['id']) > 0, 'unread' => notifications_unread((int)$u['id'])];
     }
     $out['pending'] = array_map('strval', array_keys(pending_game_edits())); // games with a change waiting for review
     echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

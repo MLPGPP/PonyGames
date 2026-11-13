@@ -644,3 +644,24 @@ td.nowrap { white-space: nowrap; }
 .share-url { display: flex; gap: .4rem; align-items: center; min-width: 380px; }
 .share-url input { flex: 1; min-width: 0; padding: .35rem .5rem; font: inherit; font-size: .85rem; border: 1px solid var(--a-line, #ddd); border-radius: 6px; background: var(--a-card-2, #f7f4fd); color: inherit; }
 .share-table tr.is-new td { background: color-mix(in srgb, var(--a-link, #7a5cc0) 12%, transparent); }
+
+/* handling a report (?view=report) */
+.report-list { margin: 0 0 1rem; padding-left: 1.1rem; display: grid; gap: .5rem; }
+.report-post { white-space: normal; padding: .7rem .8rem; border-radius: 8px; background: rgba(127, 110, 170, .1); }
+.report-actions { border: 0; margin: 0; padding: 0; display: grid; gap: .35rem; }
+.report-actions legend { font-size: .85rem; font-weight: 600; margin-bottom: .3rem; }
+.stack textarea { font: inherit; font-weight: 400; padding: .45rem .6rem; resize: vertical; }
+/* the message to the writer only matters when something happens to the post */
+.report-form:has(input[name=action][value=none]:checked) .report-author { display: none; }
+
+/* closing a bounty tip with an answer */
+.tip__answer { margin-top: .35rem; font-size: .85rem; }
+.tip__done { margin-top: .5rem; }
+.tip__done > summary { list-style: none; display: inline-block; cursor: pointer; padding: .2rem .55rem; font-size: .76rem; font-weight: 600;
+  border-radius: 6px; border: 1px solid var(--a-brand, #2b1f45); background: var(--a-brand, #2b1f45); color: #fff; }
+.tip__done > summary:hover { background: var(--a-brand-2, #3d2d60); }
+.tip__done > summary::-webkit-details-marker { display: none; }
+.tip__done[open] > summary { margin-bottom: .5rem; }
+.tip__outcome { display: flex; gap: 1rem; flex-wrap: wrap; }
+.tip__caret { display: inline-block; margin-left: .15rem; transition: transform .15s; }
+.tip__done[open] .tip__caret { transform: rotate(180deg); }

@@ -107,7 +107,7 @@ function admin_head(string $title): void
     echo '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
         . '<meta name="robots" content="noindex, nofollow"><title>' . h($title) . ' | Pony Games admin</title>'
         . '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Silkscreen&amp;display=swap">'
-        . '<link rel="stylesheet" href="admin.css?v=23"></head><body>';
+        . '<link rel="stylesheet" href="admin.css?v=26"></head><body>';
 }
 
 /** The menu at the top of every admin page. $counts: reports, submissions. */
@@ -117,12 +117,17 @@ function admin_nav(string $active, array $counts = []): void
         return '<a href="' . h($href) . '" class="' . (in_array($active, $views, true) ? 'on' : '') . '">' . $label . '</a>';
     };
     $badge = fn(int $c) => $c > 0 ? ' <span class="nav-count">' . $c . '</span>' : '';
+    // open reports and submissions show on every admin page, not only on the moderation page
+    $counts += [
+        'reports' => (int)db()->query('SELECT COUNT(*) FROM reports WHERE resolved = 0')->fetchColumn(),
+        'submissions' => (int)db()->query("SELECT COUNT(*) FROM submissions WHERE status = 'open'")->fetchColumn(),
+    ];
     $n = fn($k) => $badge((int)($counts[$k] ?? 0));
     $tips = (int)db()->query('SELECT COUNT(*) FROM bounty_tips WHERE resolved = 0')->fetchColumn(); // new tips on the bounty board
     $role = admin_role();
     $me = $role === 'owner' ? 'Owner' : h((string)($_SESSION['admin_name'] ?? '')) . ' · ' . (ADMIN_ROLES[$role] ?? '');
     echo '<header><h1><a href="./" class="brand"><img src="/textlogo.png" alt="Pony Games" width="137" height="32"><span class="brand__tag">admin</span></a></h1><nav>'
-        . $item('./?view=reports', 'Reports' . $n('reports'), ['reports', 'resolved'])
+        . $item('./?view=reports', 'Reports' . $n('reports'), ['reports', 'resolved', 'report'])
         . $item('./?view=submissions', 'Submissions' . $n('submissions'), ['submissions', 'submission'])
         . $item('./?view=posts', 'Reviews &amp; discussion', ['posts'])
         . (admin_can_manage_accounts() ? $item('./?view=users', 'Accounts', ['users', 'user']) : '')
@@ -176,3 +181,101 @@ function security_problems(bool $fresh = false): array
     return $problems;
 }
 
+
+require_once __DIR__ . '/discord.php';
+
+const REPORT_ACTIONS = ['none' => 'No action', 'hide' => 'Post hidden', 'delete' => 'Post deleted'];
+
+/**
+ * Handle a report (admin/index.php ?view=report): do something with the reported
+ * post or not, close every open report about the same post, and send the
+ * moderator's message to the members who reported it and, when something was
+ * done, to the writer of the post. Empty messages get a friendly default.
+ * "No action" on a post that was hidden by reports makes it visible again.
+ * Returns the line for the flash message.
+ */
+function handle_report(int $reportId, string $action, string $toReporter, string $toAuthor): string
+{
+    $pdo = db();
+    $st = $pdo->prepare('SELECT * FROM reports WHERE id = ?');
+    $st->execute([$reportId]);
+    $report = $st->fetch();
+    if (!$report) return 'That report is gone.';
+    if ((int)$report['resolved']) return 'That report was already handled.';
+
+    $post = null;
+    if ($report['post_id']) {
+        $st = $pdo->prepare('SELECT * FROM posts WHERE id = ?');
+        $st->execute([(int)$report['post_id']]);
+        $post = $st->fetch() ?: null;
+    }
+    if (!$post || !isset(REPORT_ACTIONS[$action])) $action = 'none';
+    $clean = fn(string $t) => mb_substr(trim(preg_replace('/[ \t]+/u', ' ', str_replace("\r", '', $t)) ?? ''), 0, 500);
+    $toReporter = $clean($toReporter);
+    $toAuthor = $action === 'none' ? '' : $clean($toAuthor);
+
+    // every open report about this post is answered at once (or just this one for a report about the game page)
+    $st = $post
+        ? $pdo->prepare('SELECT * FROM reports WHERE resolved = 0 AND post_id = ?')
+        : $pdo->prepare('SELECT * FROM reports WHERE resolved = 0 AND id = ?');
+    $st->execute([$post ? (int)$post['id'] : $reportId]);
+    $reports = $st->fetchAll();
+    $gid = (string)$report['game_id'];
+    $what = $post && $post['kind'] === 'comment' ? 'discussion message' : 'review';
+
+    $pdo->beginTransaction();
+    try {
+        if ($post && $action === 'hide') $pdo->prepare('UPDATE posts SET hidden = 1 WHERE id = ?')->execute([(int)$post['id']]);
+        if ($post && $action === 'none' && (int)$post['hidden']) $pdo->prepare('UPDATE posts SET hidden = 0 WHERE id = ?')->execute([(int)$post['id']]);
+        if ($post && $action === 'delete') {
+            lift_replies('id = ?', [(int)$post['id']]);
+            $pdo->prepare('DELETE FROM posts WHERE id = ?')->execute([(int)$post['id']]);
+        }
+        $ids = array_map(fn($r) => (int)$r['id'], $reports);
+        $pdo->prepare('UPDATE reports SET resolved = 1, action = ?, reporter_note = ?, author_note = ?, resolved_at = ?, resolved_by = ?
+                       WHERE id IN (' . implode(',', $ids) . ')')
+            ->execute([$action, $toReporter, $toAuthor, time(), admin_who()]);
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+
+    // the members who reported it (once each; reports without an account can't get a message)
+    $linkPost = $post && $action === 'none' ? (int)$post['id'] : null;
+    $default = $action === 'none'
+        ? 'A moderator looked at it and it can stay. Thanks for keeping an eye out!'
+        : 'A moderator agreed and took action. Thanks for keeping an eye out!';
+    $told = [];
+    $reporters = 0;
+    foreach ($reports as $r) {
+        $uid = (int)($r['user_id'] ?? 0);
+        if ($uid <= 0 || isset($told[$uid])) continue;
+        $told[$uid] = true;
+        if ($post && $uid === (int)($post['user_id'] ?? 0)) continue; // reported their own post
+        notify_moderation($uid, $gid, 'Your report was handled',
+            $toReporter !== '' ? $toReporter : $default, (int)$r['id'], $linkPost);
+        $reporters++;
+    }
+    // the writer, when their post was hidden or deleted
+    $author = $post && $action !== 'none' ? (int)($post['user_id'] ?? 0) : 0;
+    if ($author > 0) {
+        notify_moderation($author, $gid, 'A moderator ' . ($action === 'hide' ? 'hid' : 'removed') . ' your ' . $what,
+            $toAuthor !== '' ? $toAuthor : "It doesn't follow the Site Rules.", $reportId);
+    }
+
+    $done = ['none' => 'Report closed, no action', 'hide' => 'Post hidden', 'delete' => 'Post deleted'][$action];
+    $sent = [];
+    if ($reporters) $sent[] = $reporters === 1 ? 'the reporter' : "$reporters reporters";
+    if ($author > 0) $sent[] = 'the writer';
+    $reasons = array_count_values(array_column($reports, 'reason'));
+    discord_report_handled([
+        'action' => $action, 'game_id' => $gid, 'what' => $what, 'count' => count($reports),
+        'post_name' => $post['name'] ?? '', 'post_body' => $post['body'] ?? '',
+        'reasons' => implode(', ', array_map(fn($r, $n) => $n > 1 ? "$r ×$n" : $r, array_keys($reasons), $reasons)),
+        'reporter_note' => $toReporter, 'author_note' => $toAuthor, 'by' => admin_who(),
+        'sent' => $sent ? implode(' and ', $sent) : 'nobody (no account)',
+    ]);
+    $extra = count($reports) > 1 ? ' (' . count($reports) . ' reports about this post closed)' : '';
+    return $done . $extra . '. ' . ($sent ? 'Message sent to ' . implode(' and ', $sent) . '.' : 'Nobody to send a message to (no account).');
+}

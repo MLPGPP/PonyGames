@@ -10,6 +10,7 @@
 
 declare(strict_types=1);
 require __DIR__ . '/../inc/screenshots.php'; // also loads inc/submissions.php
+require_once __DIR__ . '/../inc/discord.php';
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
@@ -225,6 +226,7 @@ try {
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
         ->execute([$kind, $game ? (string)$game['id'] : null, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                    $note, $isDev ? 1 : 0, $name, $contact, $account ? (int)$account['id'] : null, ip_hash(), time()]);
+    discord_submission_new((int)db()->lastInsertId()); // to the moderators' Discord channel, if set up
     reply(['ok' => true], 201);
 } catch (Throwable $e) {
     foreach ($saved as $f) @unlink(uploads_dir() . '/' . $f);

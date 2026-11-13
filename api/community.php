@@ -23,6 +23,7 @@
 declare(strict_types=1);
 require __DIR__ . '/../inc/auth.php';
 require_once __DIR__ . '/../inc/notify.php';
+require_once __DIR__ . '/../inc/discord.php';
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
@@ -235,12 +236,19 @@ try {
             $reporter = current_user();
             $pdo->prepare('INSERT INTO reports (game_id, post_id, reason, details, ip_hash, created_at, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
                 ->execute([$gid, $postId, $reason, $details, ip_hash(), time(), $reporter ? (int)$reporter['id'] : null]);
+            $reportId = (int)$pdo->lastInsertId();
             // a post reported by 3 different people is hidden until a moderator looks at it
+            $autoHidden = false;
             if ($postId !== null) {
                 $st = $pdo->prepare('SELECT COUNT(DISTINCT ip_hash) FROM reports WHERE post_id = ? AND resolved = 0');
                 $st->execute([$postId]);
-                if ((int)$st->fetchColumn() >= 3) $pdo->prepare('UPDATE posts SET hidden = 1 WHERE id = ?')->execute([$postId]);
+                if ((int)$st->fetchColumn() >= 3) {
+                    $st = $pdo->prepare('UPDATE posts SET hidden = 1 WHERE id = ? AND hidden = 0');
+                    $st->execute([$postId]);
+                    $autoHidden = $st->rowCount() > 0;
+                }
             }
+            discord_report_new($reportId, $autoHidden); // to the moderators' Discord channel, if set up
             reply(['ok' => true], 201);
 
         default:

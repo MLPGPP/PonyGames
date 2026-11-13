@@ -11,6 +11,7 @@
 
 declare(strict_types=1);
 require __DIR__ . '/../inc/auth.php';
+require_once __DIR__ . '/../inc/discord.php';
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
@@ -67,10 +68,11 @@ try {
     }
 
     $account = current_user();
-    if ($account && $name === '') $name = (string)$account['display_name'];
+    if ($account) $name = (string)$account['display_name']; // members always send under their own name
     db()->prepare('INSERT INTO bounty_tips (bounty_id, title, author, links, notes, name, contact, ip_hash, created_at, user_id)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
         ->execute([$bountyId, $title, $author, $links, $notes, $name, $contact, ip_hash(), time(), $account ? (int)$account['id'] : null]);
+    discord_tip_new((int)db()->lastInsertId()); // to the moderators' Discord channel, if set up
     reply(['ok' => true], 201);
 } catch (Throwable $e) {
     error_log('bounty api: ' . $e->getMessage());
