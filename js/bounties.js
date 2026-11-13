@@ -216,7 +216,7 @@
       bounties = Array.isArray(data.bounties) ? data.bounties : [];
       updateStats();
       render();
-      // bounties.html#bounty-3 opens that poster's tip form
+      // /bounties#bounty-3 opens that poster's tip form
       const m = location.hash.match(/^#bounty-(.+)$/);
       if (m) {
         const b = bounties.find((x) => String(x.id) === decodeURIComponent(m[1]));

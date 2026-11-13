@@ -1857,7 +1857,7 @@ const FACET_VALUES = {
 };
 
 // Status values in games.json and how the site names them.
-// "Upcoming" games live on their own page (upcoming.html), not in the main list.
+// "Upcoming" games live on their own page (/upcoming), not in the main list.
 const STATUS_LABELS = {
   Released: "Released",
   "In Development": "Unfinished",
@@ -1905,7 +1905,7 @@ async function initGamesPage() {
     return;
   }
 
-  // games.html lists everything except announced-only games; upcoming.html only those
+  // /games lists everything except announced-only games; /upcoming only those
   const upcomingPage = grid.dataset.scope === "upcoming";
   const allGames = everyGame.filter((g) => (g.status === UPCOMING_STATUS) === upcomingPage);
   // the detail panel can open any game (e.g. a shared ?game= link)
@@ -2802,10 +2802,11 @@ function storeBookmarks(list) {
   document.dispatchEvent(new CustomEvent("pg:bookmarks"));
 }
 
-/* The header shows the logged-in state from the last visit straight away
-   (localStorage "pg-me"), so the button doesn't flash "Log in" while
-   /api/me.php is on its way; the answer then corrects it if needed.
-   The inline script in <head> sets html[data-me] to hide "Log in" until then. */
+/* The server renders the account button (inc/layout.php). What we knew on the
+   last visit (localStorage "pg-me": name, avatar, unread count) lets the
+   notification bell show straight away while /api/me.php is on its way; the
+   answer then corrects it. paintAccountLink() only changes a button that the
+   server didn't render (data-server). */
 const ME_CACHE_KEY = "pg-me";
 let accountLinkOriginal = null;
 function readMeCache() {
@@ -2872,7 +2873,6 @@ async function initAccount() {
       document.querySelector("[data-notif]")?.remove();
     }
   }
-  delete document.documentElement.dataset.me; // show the button whatever happened
   let owner = null;
   try {
     owner = localStorage.getItem(BOOKMARK_OWNER_KEY);
@@ -2893,7 +2893,7 @@ async function initAccount() {
     return;
   }
 
-  // header button on the static pages
+  // header button (the server already renders it; this only fills in one it didn't)
   const link = headerLink;
   paintAccountLink(link, me.user);
 

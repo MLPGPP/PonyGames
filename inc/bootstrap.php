@@ -76,7 +76,7 @@ function after_response(callable $job, int $timeLimit = 120): void
 
 /**
  * Pages have short addresses (/games, /rules, /account; nginx rewrites them to
- * the .html/.php files, see deploy/nginx-ponygames.conf). The old ones
+ * the .php files, see deploy/nginx-ponygames.conf). The old ones
  * (/games.html) still work; this maps them to the short one, for the stats.
  */
 const CLEAN_PAGES = ['games', 'upcoming', 'resources', 'bounties', 'about', 'rules', 'account', 'login', 'submit'];

@@ -1,7 +1,7 @@
 <?php
 /**
- * Who is logged in? Used by main.js on the static pages for the header
- * button and to keep bookmarks in sync.
+ * Who is logged in? Used by main.js for likes, bookmarks, the notification bell
+ * and to keep bookmarks in sync.
  *   GET /api/me.php -> { user: null, pending } or { user: {...}, bookmarks: [...], notifications, pending }
  *   notifications: { on: bell wanted, unread: number }
  *   pending: ids of games with a suggested change waiting for a moderator

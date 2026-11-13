@@ -4489,8 +4489,6 @@ body.gf-locked {
 .settings-group + .settings-group { margin-top: 0.4rem; }
 .settings-group legend { margin-bottom: 0.45rem; padding: 0; font-size: 0.8rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-text-muted); }
 
-/* logged in on the last visit: no "Log in" flash while the page checks (see main.js paintFromCache) */
-html[data-me] .site-nav .account-link:not(.is-logged-in) { visibility: hidden; }
 
 /* earned badges next to a member's name in reviews and the discussion */
 .post__badges { display: inline-flex; align-items: center; gap: 0.2rem; }

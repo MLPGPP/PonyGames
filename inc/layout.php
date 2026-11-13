@@ -1,20 +1,34 @@
 <?php
 /**
- * Header and footer for the PHP pages (game pages). The static pages
- * (index.html, games.html, ...) have their own copy of this markup:
- * when you change the menu or footer there, change it here too.
- * Paths are absolute because game pages live under /game/.
+ * The shared page parts: <head>, header and footer, for every page of the
+ * site (home, games, resources, game pages, account, ...). Change the menu,
+ * footer or <head> here, once. Paths are absolute: pages live at /games,
+ * /game/12-title, ... CSS/JS get ?v=ASSET_V so browsers fetch new versions.
  */
 
-const ASSET_V = '20261112b'; // bump together with the ?v= in the static pages
+const ASSET_V = '20261113a'; // bump after changing css/ or js/
 
-/** <!DOCTYPE> through the header, for simple PHP pages (login, account, ...). */
-function render_page_start(string $title, string $active = '', string $description = '', bool $noindex = true): void
+/**
+ * <!DOCTYPE> through the header.
+ *  $title       "Games" -> "Games | Pony Games" (see 'full_title')
+ *  $active      menu item to highlight: home, games, resources, bounties, about
+ *  $noindex     true for pages search engines should skip (login, account, ...)
+ *  $opts        'canonical'  => '/games': adds the canonical link and the
+ *                               Open Graph / Twitter tags for link previews
+ *               'full_title' => true: use $title as is (the home page)
+ *               'head'       => extra HTML for <head> (structured data, CSS)
+ *               'body_class' => class for <body>
+ */
+function render_page_start(string $title, string $active = '', string $description = '', bool $noindex = true, array $opts = []): void
 {
+    $fullTitle = !empty($opts['full_title']) ? $title : $title . ' | Pony Games';
+    // who's logged in, before any output: the session can't be opened once the page has started
+    if (function_exists('current_user')) current_user();
 ?><!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <!-- set the theme before first paint, avoids a flash of the wrong theme -->
   <script>
     try {
       var pgTheme = localStorage.getItem("pg-theme");
@@ -22,35 +36,64 @@ function render_page_start(string $title, string $active = '', string $descripti
     } catch (e) {}
   </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title><?= h($title) ?> | Pony Games</title>
+  <title><?= h($fullTitle) ?></title>
 <?php if ($description !== ''): ?>
   <meta name="description" content="<?= h($description) ?>" />
 <?php endif; ?>
 <?php if ($noindex): ?>
   <meta name="robots" content="noindex" />
 <?php endif; ?>
+<?php if (!empty($opts['canonical'])): $url = 'https://pony.games' . $opts['canonical']; ?>
+  <link rel="canonical" href="<?= h($url) ?>" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Pony Games" />
+  <meta property="og:title" content="<?= h($fullTitle) ?>" />
+  <meta property="og:description" content="<?= h($description) ?>" />
+  <meta property="og:url" content="<?= h($url) ?>" />
+  <meta property="og:image" content="https://pony.games/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Pony Games logo: community directory of pony fan games" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="<?= h($fullTitle) ?>" />
+  <meta name="twitter:description" content="<?= h($description) ?>" />
+  <meta name="twitter:image" content="https://pony.games/og-image.png" />
+<?php endif; ?>
   <meta name="referrer" content="same-origin">
   <meta name="theme-color" content="#16213e" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+  <link rel="manifest" href="/site.webmanifest">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Silkscreen&display=swap">
   <link rel="stylesheet" href="/css/style.css?v=<?= ASSET_V ?>" />
+<?= $opts['head'] ?? '' ?>
 </head>
-<body>
+<body<?= !empty($opts['body_class']) ? ' class="' . h($opts['body_class']) . '"' : '' ?>>
 <?php
     render_header($active);
 }
 
-function render_page_end(array $scripts = []): void
+/**
+ * Footer, scripts and the end of the page.
+ *  $scripts  scripts after main.js ("/js/submit.js"; full https:// URLs as is)
+ *  $opts     'before_main' => scripts before main.js (the home page's timer)
+ *            'html'        => HTML after the footer (e.g. the mascot lightbox)
+ */
+function render_page_end(array $scripts = [], array $opts = []): void
 {
     render_footer();
-    echo '  <script src="/js/main.js?v=' . ASSET_V . "\"></script>\n";
-    foreach ($scripts as $src) echo '  <script src="' . h($src) . '?v=' . ASSET_V . "\"></script>\n";
+    echo $opts['html'] ?? '';
+    $tag = fn(string $src) => '  <script src="' . h(str_starts_with($src, 'http') ? $src : $src . '?v=' . ASSET_V) . "\"></script>\n";
+    foreach ($opts['before_main'] ?? [] as $src) echo $tag($src);
+    echo $tag('/js/main.js');
+    foreach ($scripts as $src) echo $tag($src);
     echo "</body>\n</html>\n";
 }
 
-/** The "Log in" / account button in the header. On static pages main.js fills it in. */
+/** The "Log in" / account button in the header (main.js adds the notification bell next to it). */
 function account_link_html(): string
 {
     $u = function_exists('current_user') ? current_user() : null;

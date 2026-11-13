@@ -8,9 +8,11 @@
 </div>
 
 Community-run directory of pony fan games, jams, and dev resources.
-No build step. The listing pages are static HTML + JS; each game also has
-its own page (`/game/<id>-<slug>`) rendered by PHP, with likes, reviews,
-a discussion and reports stored in SQLite.
+No build step. Every page is PHP with plain JavaScript: the pages share one
+header, footer and `<head>` (`inc/layout.php`), and the game list, bounties
+and resources are filled in by JavaScript from `data/*.json`. Each game also
+has its own page (`/game/<id>-<slug>`), with likes, reviews, a discussion and
+reports stored in SQLite.
 
 ## Running locally
 
@@ -18,25 +20,28 @@ Needs PHP 8.1+ with `pdo_sqlite` (and ideally `intl`). From the repo root:
 
     php -S localhost:8000 router.php
 
-Then open http://localhost:8000. `router.php` does what the nginx rewrite
-does in production (game pages, sitemap.xml) and blocks private folders.
-Opening index.html via file:// won't work, the pages fetch data/*.json.
-
-Without PHP, `python -m http.server 8000` still serves the static pages,
-but game pages, likes and reviews won't work.
+Then open http://localhost:8000. `router.php` does what the nginx rewrites
+do in production (page addresses, game pages, short links, sitemap.xml) and
+blocks private folders. The site needs PHP; opening the files directly
+(file://) doesn't work.
 
 ## Page addresses
 
 Pages have short addresses: `/games`, `/upcoming`, `/resources`, `/bounties`,
 `/about`, `/rules`, `/account`, `/login`, `/submit` (and `/game/12-title` for
-games). nginx maps them to the `.html`/`.php` files (two `rewrite` lines in
+games). nginx maps them to the `.php` files (`rewrite` lines in
 `deploy/nginx-ponygames.conf`; on aaPanel they go under Website → URL rewrite).
-The old addresses keep working, so links shared like `games.html?game=332`
-still open that game. The stats count both as the same page.
+The pages used to be `.html` files. The nginx rule redirects the old
+addresses, so links shared like `games.html?game=332` still open that game
+(as `/games?game=332`). Without that rule they give a 404, so keep it in the
+server config. The stats count old and new as one page.
 
 ## Layout
 
-    *.html            pages (vanilla JS, one shared stylesheet)
+    index.php, games.php, upcoming.php, resources.php, bounties.php, about.php,
+    rules.php         the pages (vanilla JS, one shared stylesheet)
+    inc/layout.php    the shared <head>, header and footer, and ASSET_V: bump it
+                      after changing css/ or js/, so browsers fetch the new files
     game.php          one page per game: /game/<id>-<slug>
     sitemap.php       sitemap.xml with every page and game (for Google)
     api/community.php likes, reviews, discussion, reports (JSON, used by js/game.js)
@@ -91,21 +96,21 @@ still open that game. The stats count both as the same page.
 
   | Value            | Shown on the site as | Where it appears                      |
   |------------------|----------------------|---------------------------------------|
-  | `Released`       | Released games       | games.html                            |
-  | `In Development` | Unfinished games     | games.html, playable but unfinished   |
-  | `Cancelled`      | Cancelled games      | games.html, no longer being worked on |
-  | `Upcoming`       | Upcoming games       | upcoming.html only: announced, but no playable demo yet |
+  | `Released`       | Released games       | /games                                |
+  | `In Development` | Unfinished games     | /games, playable but unfinished       |
+  | `Cancelled`      | Cancelled games      | /games, no longer being worked on     |
+  | `Upcoming`       | Upcoming games       | /upcoming only: announced, but no playable demo yet |
 
   The "Games" menu in the header links to each one
-  (`games.html?status=Released` etc.). Move a game from `Upcoming` to
+  (`/games?status=Released` etc.). Move a game from `Upcoming` to
   `In Development` once it has a playable build. (Old `Abandoned` values
   still work and show as Cancelled.)
 - Mods are normal entries with an extra tag `{ "label": "Mod", "type": "Other" }`.
-  "Mods" in the Games menu is `games.html?tag=Mod`.
+  "Mods" in the Games menu is `/games?tag=Mod`.
 - A game's page URL comes from its `id` and title: `/game/332-drifter`.
   Only the id matters; a wrong or old slug redirects to the right one, so
   renaming a game doesn't break links. Old `games.html?game=ID` links
-  redirect too. Never reuse an id.
+  still open the game too. Never reuse an id.
 - Upcoming games show "follow" buttons instead of downloads: `url` is the
   dev page (Steam, itch.io, a website...), and an optional `socials` list
   adds more, e.g.
@@ -134,7 +139,7 @@ still open that game. The stats count both as the same page.
 
 ## Bounties
 
-`bounties.html` is the bounty board: games we know existed but can't find.
+`/bounties` (bounties.php) is the bounty board: games we know existed but can't find.
 Visitors click "I've seen it!" on a poster to send links; those tips land in
 the moderation panel (`/admin/` → Bounties, above the list), together with suggestions
 for new bounties. Nothing is published automatically.
@@ -339,8 +344,9 @@ next to a bounty tip from a logged-in member). The badge list is `BADGES`
 in `inc/auth.php`; add new ones there, but never change an existing id.
 
 Pages: `login.php` (log in / sign up / forgot password), `account.php`,
-`reset.php`, `verify.php`, `logout.php`. The static
-pages ask `api/me.php` who is logged in to show the account button.
+`reset.php`, `verify.php`, `logout.php`. The server shows the account
+button in the header; `api/me.php` tells the page's JavaScript who is logged
+in (likes, bookmarks, the notification bell).
 
 **Email** Mail is needed. Account are like not be able to place posts or reviews if their email is not verified: "forgot password" tells people to ask a moderator, who
 makes a one-time reset link in `/admin/` → Accounts → Manage. To send mail

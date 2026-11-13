@@ -9,13 +9,16 @@
  */
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 
-// short page addresses, like nginx: /games -> games.html, /rules -> rules.php
-if (preg_match('#^/(games|upcoming|resources|bounties|about)$#', $path, $m)) {
-    header('Content-Type: text/html; charset=utf-8');
-    readfile(__DIR__ . '/' . $m[1] . '.html');
+// page addresses, like nginx: /games -> games.php; old /games.html -> /games
+if (preg_match('#^/(games|upcoming|resources|bounties|about)\.html$#', $path, $m)) {
+    header('Location: /' . $m[1] . (($_SERVER['QUERY_STRING'] ?? '') !== '' ? '?' . $_SERVER['QUERY_STRING'] : ''), true, 301);
     return true;
 }
-if (preg_match('#^/(rules|account|login|logout|submit)$#', $path, $m)) {
+if ($path === '/') {
+    require __DIR__ . '/index.php';
+    return true;
+}
+if (preg_match('#^/(games|upcoming|resources|bounties|about|rules|account|login|logout|submit)$#', $path, $m)) {
     $_SERVER['SCRIPT_NAME'] = '/' . $m[1] . '.php';
     require __DIR__ . '/' . $m[1] . '.php';
     return true;
