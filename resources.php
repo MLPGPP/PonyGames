@@ -56,7 +56,7 @@ render_page_start('Resources', 'resources', 'Free assets and resources for pony 
       <div class="games-main">
         <div class="games-head">
           <h1 class="page-title">Resources</h1>
-          <p class="games-head__sub"><span id="resource-filter-results">0 resources</span><span id="resource-filter-total"></span> · Free assets for every pony making games. Click a card for details and downloads.</p>
+          <p class="games-head__sub"><span id="resource-filter-results">0 resources</span><span id="resource-filter-total"></span> · Free assets for every pony making games. Click a card for details and downloads. Made something? <a href="/submit?resource">Submit a resource</a>. Missing something? <a href="/requests">Request it</a>.</p>
         </div>
 
         <div class="games-toolbar">
@@ -108,6 +108,11 @@ render_page_start('Resources', 'resources', 'Free assets and resources for pony 
       <div class="detail-panel__license-wrap" hidden>
         <span class="detail-panel__license-label">License</span>
         <span class="detail-panel__license"></span>
+      </div>
+      <div class="detail-panel__credit" hidden>
+        <span class="detail-panel__license-label">How to credit</span>
+        <p class="detail-panel__credit-text"></p>
+        <button type="button" class="detail-panel__credit-copy">Copy</button>
       </div>
       <div class="detail-panel__meta">
         <div class="detail-panel__tags"></div>

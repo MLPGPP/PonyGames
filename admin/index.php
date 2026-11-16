@@ -164,6 +164,16 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                                     $content['games'][$idx] = build_game_json($sd['changes'] ?? [], $base, null, $paths);
                                     save_content('games', $content, $what);
                                 }
+                            } elseif ($sub['kind'] === 'resource') {
+                                // a resource: into resources.json, the previews in asset_previews/<id>/
+                                $res = load_content('resources');
+                                $newRes = 0;
+                                foreach ($res['assets'] as $a) $newRes = max($newRes, (int)$a['id'] + 1);
+                                $paths = publish_submission_images($sd['images'] ?? [], 'asset_previews/' . $newRes, 0);
+                                $item = build_resource_json($sd['values'] ?? [], $newRes, $paths);
+                                $res['assets'][] = $item;
+                                $published = $item['name'];
+                                save_content('resources', refresh_resource_lists($res), 'Published submission #' . $id . ' as resource #' . $newRes . ' ' . $item['name']);
                             } else {
                                 $newId = next_game_id($content['games']);
                                 $paths = publish_submission_images($sd['images'] ?? [], 's/' . $newId, 0);
@@ -183,8 +193,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     $stars = max(0, min(20, (int)($_POST['stars'] ?? 0)));
                     if ($accepted && $uid && $stars) {
                         $what = $sub['kind'] === 'edit' ? 'Corrected ' : 'Submitted ';
+                        $sv = json_decode($sub['data'], true)['values'] ?? [];
                         $title = $sub['kind'] === 'edit' ? (all_games()[$sub['game_id']]['title'] ?? 'a game')
-                            : (json_decode($sub['data'], true)['values']['title'] ?? 'a game');
+                            : ($sub['kind'] === 'resource' ? 'the resource ' . ($sv['name'] ?? '') : ($sv['title'] ?? 'a game'));
                         $pdo->prepare('UPDATE users SET stars = stars + ? WHERE id = ?')->execute([$stars, $uid]);
                         $pdo->prepare('INSERT INTO star_events (user_id, amount, reason, created_at) VALUES (?, ?, ?, ?)')
                             ->execute([$uid, $stars, $what . $title, time()]);
@@ -198,27 +209,30 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     if ($uid) {
                         $sd = json_decode($sub['data'], true) ?: [];
                         $isEdit = $sub['kind'] === 'edit';
-                        $gid = $isEdit ? (string)$sub['game_id'] : (string)($newId ?? '');
+                        $isRes = $sub['kind'] === 'resource';
+                        $gid = $isEdit ? (string)$sub['game_id'] : ($isRes ? '' : (string)($newId ?? ''));
                         $games2 = all_games();
-                        $name = $isEdit ? (string)($games2[$gid]['title'] ?? 'a game') : (string)($sd['values']['title'] ?? 'your game');
+                        $name = $isEdit ? (string)($games2[$gid]['title'] ?? 'a game') : (string)($sd['values'][$isRes ? 'name' : 'title'] ?? 'your game');
                         $live = $accepted && $gid !== '' && isset($games2[$gid]);
                         $reply = mb_substr(trim((string)($_POST['reply'] ?? '')), 0, 500);
                         $body = $reply !== '' ? $reply : ($accepted
-                            ? ($isEdit ? 'Thanks for helping keep the info right!' : ($live ? 'It\'s on the site now. Thanks for sharing it!' : 'It will be on the site soon. Thanks for sharing it!'))
+                            ? ($isEdit ? 'Thanks for helping keep the info right!' : ($live || ($isRes && $published !== '') ? 'It\'s on the site now. Thanks for sharing it!' : 'It will be on the site soon. Thanks for sharing it!'))
                             : 'Sorry, it couldn\'t be added this time.');
                         $earned = [];
                         if ($accepted && $stars) $earned[] = $stars . ' gold star' . ($stars === 1 ? '' : 's');
                         if ($accepted && isset(BADGES[$badge])) $earned[] = 'the ' . BADGES[$badge][0] . ' badge';
                         if ($earned) $body .= ' You earned ' . implode(' and ', $earned) . '.';
                         $title = $accepted
-                            ? ($isEdit ? 'Your correction to “' . $name . '” was accepted' : 'Your game “' . $name . '” was accepted 🎉')
+                            ? ($isEdit ? 'Your correction to “' . $name . '” was accepted' : ($isRes ? 'Your resource “' . $name . '” was accepted 🎉' : 'Your game “' . $name . '” was accepted 🎉'))
                             : ($isEdit ? 'Your correction to “' . $name . '” wasn\'t accepted' : 'Your submission “' . $name . '” wasn\'t accepted');
-                        notify_submission($uid, $gid, $title, $body, $id, $live ? game_path($games2[$gid]) : '/account#submissions');
+                        $link = $live ? game_path($games2[$gid]) : '/account#submissions';
+                        if ($isRes && $accepted && $published !== '') $link = '/resources?resource=' . (int)($newRes ?? 0);
+                        notify_submission($uid, $gid, $title, $body, $id, $link);
                     }
                     // to the moderators' Discord channel, if set up (inc/discord.php)
                     $sd = json_decode($sub['data'], true) ?: [];
                     $isEdit = $sub['kind'] === 'edit';
-                    $gidD = $isEdit ? (string)$sub['game_id'] : (string)($newId ?? '');
+                    $gidD = $isEdit ? (string)$sub['game_id'] : ($sub['kind'] === 'resource' ? '' : (string)($newId ?? ''));
                     $gamesD = all_games();
                     $rewards = [];
                     if ($accepted && $uid && $stars) $rewards[] = $stars . ' gold star' . ($stars === 1 ? '' : 's');
@@ -228,13 +242,15 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     $member = $uid ? (string)($memberSt->fetchColumn() ?: 'a deleted account') : ((string)($sub['name'] ?? '') !== '' ? $sub['name'] . ' (no account)' : 'someone without an account');
                     discord_submission_done($id, [
                         'accepted' => $accepted, 'edit' => $isEdit,
-                        'name' => $isEdit ? (string)($gamesD[$gidD]['title'] ?? 'game #' . $gidD) : (string)($sd['values']['title'] ?? 'untitled'),
+                        'name' => $isEdit ? (string)($gamesD[$gidD]['title'] ?? 'game #' . $gidD) : (string)($sd['values']['title'] ?? $sd['values']['name'] ?? 'untitled'),
+                        'resource' => $sub['kind'] === 'resource',
                         'game_id' => $gidD, 'live' => $accepted && $gidD !== '' && isset($gamesD[$gidD]),
                         'reply' => mb_substr(trim((string)($_POST['reply'] ?? '')), 0, 500), 'notified' => $uid > 0,
                         'rewards' => implode(' and ', $rewards), 'by' => admin_who(), 'member' => $member, 'published' => $published !== '',
                     ]);
                     $_SESSION['admin_flash'] = !$accepted ? 'Marked as rejected.'
-                        : ($published !== '' ? "Accepted and published “{$published}” to games.json." . $pubNote : 'Marked as accepted. Don\'t forget to put the JSON in games.json!');
+                        : ($published !== '' ? "Accepted and published “{$published}” to " . ($sub['kind'] === 'resource' ? 'resources.json.' : 'games.json.') . $pubNote
+                            : 'Marked as accepted. Don\'t forget to put the JSON in ' . ($sub['kind'] === 'resource' ? 'resources.json!' : 'games.json!'));
                 }
                 header('Location: ./?view=submissions'); exit;
             case 'sub-reopen':
@@ -289,7 +305,7 @@ $form = function (string $do, int $id, string $label, string $view, bool $danger
 <meta name="robots" content="noindex, nofollow">
 <title>Moderation | Pony Games</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Silkscreen&amp;display=swap">
-<link rel="stylesheet" href="admin.css?v=26">
+<link rel="stylesheet" href="admin.css?v=27">
 </head>
 <body>
 <?php if (empty($_SESSION['admin'])): ?>
@@ -336,13 +352,13 @@ $form = function (string $do, int $id, string $label, string $view, bool $danger
       <a href="?view=submissions&amp;show=<?= $k ?>" class="<?= $show === $k ? 'on' : '' ?>"><?= $l ?></a><?php endforeach ?></p>
     <?php if (!$rows): ?><p class="empty">No <?= $show ?> submissions.</p><?php else: ?>
     <table>
-      <tr><th>When</th><th>Type</th><th>Game</th><th>From</th><th>Note</th><th></th></tr>
+      <tr><th>When</th><th>Type</th><th>Game / resource</th><th>From</th><th>Note</th><th></th></tr>
       <?php foreach ($rows as $r): $d = json_decode($r['data'], true) ?: []; ?>
         <tr>
           <td class="muted"><?= $when((int)$r['created_at']) ?></td>
-          <td><?= $r['kind'] === 'edit' ? '✎ Correction' : '＋ New game' ?><?= $r['is_dev'] ? '<br><span class="muted">by the developer</span>' : '' ?></td>
+          <td><?= ['edit' => '✎ Correction', 'resource' => '🧩 New resource'][$r['kind']] ?? '＋ New game' ?><?= $r['is_dev'] ? '<br><span class="muted">by the developer</span>' : '' ?></td>
           <td><?php if ($r['kind'] === 'edit'): ?><?= $gameLink((string)$r['game_id']) ?><br><span class="muted"><?= h(implode(', ', array_map(fn($k) => SUBMIT_FIELD_LABELS[$k] ?? $k, array_keys($d['changes'] ?? [])))) ?: 'note only' ?></span>
-              <?php else: ?><strong><?= h($d['values']['title'] ?? '?') ?></strong><?php endif ?></td>
+              <?php else: ?><strong><?= h($d['values']['title'] ?? $d['values']['name'] ?? '?') ?></strong><?php endif ?></td>
           <td><?= h($r['name'] ?: 'anonymous') ?><?= $r['member'] ? '<br><span class="muted">member</span>' : '' ?></td>
           <td class="body"><?= h(mb_strimwidth((string)$r['note'], 0, 140, '…')) ?></td>
           <td class="acts"><a class="button" href="?view=submission&amp;id=<?= (int)$r['id'] ?>">Review</a></td>
@@ -354,7 +370,75 @@ $form = function (string $do, int $id, string $label, string $view, bool $danger
     $st = $pdo->prepare('SELECT s.*, u.display_name AS member, u.stars AS member_stars FROM submissions s LEFT JOIN users u ON u.id = s.user_id WHERE s.id = ?');
     $st->execute([(int)($_GET['id'] ?? 0)]);
     $sub = $st->fetch();
-    if (!$sub): ?><p class="empty">That submission doesn't exist (anymore). <a href="?view=submissions">Back</a></p><?php else:
+    if (!$sub): ?><p class="empty">That submission doesn't exist (anymore). <a href="?view=submissions">Back</a></p><?php
+    elseif ($sub['kind'] === 'resource'):
+      // a resource for data/resources.json
+      $d = json_decode($sub['data'], true) ?: [];
+      $v = $d['values'] ?? [];
+      $resData = load_content('resources');
+      $nextRes = 0;
+      foreach ($resData['assets'] as $a) $nextRes = max($nextRes, (int)$a['id'] + 1);
+      $paths = [];
+      foreach ($d['images'] ?? [] as $i => $f) $paths[] = '/asset_previews/' . $nextRes . '/' . $i . '.' . pathinfo($f, PATHINFO_EXTENSION);
+      $json = build_resource_json($v, $nextRes, $paths);
+      $known = resource_choices(); ?>
+    <p><a href="?view=submissions">← All submissions</a></p>
+    <div class="panel">
+      <h2>🧩 New resource: <?= h((string)($v['name'] ?? '?')) ?> <span class="tag tag--<?= h($sub['status']) ?>"><?= h($sub['status']) ?></span></h2>
+      <p class="muted">Sent <?= $when((int)$sub['created_at']) ?> by <strong><?= h($sub['name'] ?: 'anonymous') ?></strong>
+        <?= $sub['contact'] !== '' ? '(' . h($sub['contact']) . ')' : '' ?>
+        <?= $sub['member'] ? ' · member <a href="?view=user&amp;id=' . (int)$sub['user_id'] . '">' . h($sub['member']) . '</a> ★ ' . (int)$sub['member_stars'] : ' · no account' ?>
+        <?= $sub['is_dev'] ? ' · <strong>says they made it</strong>' : '' ?></p>
+      <?php if ($sub['note'] !== ''): ?><blockquote class="note"><?= nl2br(h($sub['note'])) ?></blockquote><?php endif ?>
+    </div>
+    <div class="panel">
+      <h3>Details</h3>
+      <table class="diff">
+        <?php foreach (RESOURCE_FIELD_LABELS as $k => $label): $val = $v[$k] ?? ''; if ($val === '' || $val === []) continue; ?>
+          <tr><td><strong><?= h($label) ?></strong></td><td class="body new"><?php
+            if ($k === 'downloads') echo implode('<br>', array_map(fn($u) => '<a href="' . h($u) . '" target="_blank" rel="noopener noreferrer nofollow">' . h($u) . '</a>', (array)$val));
+            else echo h(submission_value_text($val));
+            if ($k === 'license' && !isset($known['licenses'][$val])) echo ' <span class="muted">(new license: add its link in the JSON)</span>';
+            if ($k === 'assetPack' && !in_array($val, $known['packs'], true)) echo ' <span class="muted">(new pack)</span>'; ?></td></tr>
+        <?php endforeach ?>
+      </table>
+    </div>
+    <?php if (!empty($d['images'])): ?>
+    <div class="panel">
+      <h3>Previews <span class="muted">first = thumbnail</span></h3>
+      <div class="shots"><?php foreach ($d['images'] as $i => $f): ?>
+        <figure><a href="file.php?f=<?= h($f) ?>" target="_blank"><img src="file.php?f=<?= h($f) ?>" alt=""></a>
+          <figcaption><code><?= h(ltrim($paths[$i], '/')) ?></code> · <a href="file.php?f=<?= h($f) ?>&amp;download=1">download</a></figcaption></figure>
+      <?php endforeach ?></div>
+    </div>
+    <?php endif ?>
+    <div class="panel">
+      <h3>New entry for resources.json</h3>
+      <p class="muted">Publishing below adds this for you. Check that id <?= $nextRes ?> is still free if you add it by hand.</p>
+      <textarea class="json" readonly rows="14"><?= h(json_encode($json, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?></textarea>
+    </div>
+    <div class="panel">
+      <?php if ($sub['status'] === 'open'): ?>
+      <h3>Decision</h3>
+      <form method="post" class="stack">
+        <input type="hidden" name="csrf" value="<?= h($csrf) ?>"><input type="hidden" name="id" value="<?= (int)$sub['id'] ?>">
+        <label>Message for the sender (optional, members see it under the bell) <input name="reply" maxlength="500" placeholder="e.g. Lovely sprites, thank you!"></label>
+        <?php if ($sub['user_id']): ?>
+        <div class="row">
+          <label>Gold stars <input type="number" name="stars" value="1" min="0" max="20"></label>
+          <label>Badge <select name="badge"><option value="">none</option><?php foreach (BADGES as $bid => $b): ?><option value="<?= h($bid) ?>"<?= $sub['is_dev'] && $bid === 'asset-maker' ? ' selected' : '' ?>><?= $b[2] ?> <?= h($b[0]) ?></option><?php endforeach ?></select></label>
+        </div>
+        <?php else: ?><p class="muted">Sent without an account, so no stars or badges.</p><?php endif ?>
+        <label class="check"><input type="checkbox" name="publish" value="1" checked> Publish it to resources.json right away<?= !empty($d['images']) ? ' (and put the previews in asset_previews/' . $nextRes . '/)' : '' ?></label>
+        <div class="row"><button name="do" value="sub-accept">✓ Accept</button><button name="do" value="sub-reject" class="danger">✗ Reject</button></div>
+      </form>
+      <?php else: ?>
+      <p><?= $sub['status'] === 'accepted' ? '✓ Accepted' : '✗ Rejected' ?> on <?= $when((int)$sub['reviewed_at']) ?><?= $sub['reply'] !== '' ? ': “' . h($sub['reply']) . '”' : '' ?></p>
+      <?= $form('sub-reopen', (int)$sub['id'], 'Reopen', 'submission') ?>
+      <?php endif ?>
+      <?= $form('sub-delete', (int)$sub['id'], 'Delete submission and its pictures', 'submission', true) ?>
+    </div>
+    <?php else:
       $d = json_decode($sub['data'], true) ?: [];
       $isEdit = $sub['kind'] === 'edit';
       $game = $isEdit ? ($games[(string)$sub['game_id']] ?? null) : null;

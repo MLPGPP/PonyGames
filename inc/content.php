@@ -358,8 +358,12 @@ function resource_from_post(array $p, array $old, array $licenses): array
     }
     $r['license'] = $lic;
     $r['downloads'] = lines($t('downloads'));
-    $r['previews'] = lines($t('previews'));
-    $r['thumbnail'] = $t('thumbnail') ?: ($r['previews'][0] ?? '');
+    // pictures: from the picture editor (admin/resources.php, saved separately); the old text fields still work
+    if (array_key_exists('previews', $p)) $r['previews'] = lines($t('previews'));
+    if (array_key_exists('thumbnail', $p) || array_key_exists('previews', $p)) $r['thumbnail'] = $t('thumbnail') ?: ($r['previews'][0] ?? '');
+    // videos (YouTube or video file links), shown after the pictures, like for games
+    $videos = array_values(array_filter(lines($t('videos')), fn($u) => preg_match('#^https?://#i', $u)));
+    if ($videos) $r['videos'] = $videos; else unset($r['videos']);
     return $r;
 }
 

@@ -75,8 +75,12 @@ try {
                 ->execute([$ref, $day, $path, $visitor]);
         }
         header('X-PG-Track: counted');
-        // keep a little over a year
-        if (random_int(1, 500) === 1) db()->prepare('DELETE FROM page_views WHERE day < ?')->execute([$day - 400]);
+        // keep a little over a year; of older days only the totals stay (stats_days, for "All time" in admin/stats.php)
+        if (random_int(1, 500) === 1) {
+            db()->prepare('INSERT OR IGNORE INTO stats_days (day, visits, views) SELECT day, COUNT(DISTINCT visitor), SUM(hits) FROM page_views WHERE day < ? GROUP BY day')
+                ->execute([$day - 400]);
+            db()->prepare('DELETE FROM page_views WHERE day < ?')->execute([$day - 400]);
+        }
         http_response_code(204);
         exit;
     }

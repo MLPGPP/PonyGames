@@ -18,7 +18,7 @@ if ($path === '/') {
     require __DIR__ . '/index.php';
     return true;
 }
-if (preg_match('#^/(games|upcoming|resources|bounties|about|rules|account|login|logout|submit)$#', $path, $m)) {
+if (preg_match('#^/(games|upcoming|resources|requests|bounties|about|rules|account|login|logout|submit)$#', $path, $m)) {
     $_SERVER['SCRIPT_NAME'] = '/' . $m[1] . '.php';
     require __DIR__ . '/' . $m[1] . '.php';
     return true;

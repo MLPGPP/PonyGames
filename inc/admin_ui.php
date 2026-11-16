@@ -107,7 +107,7 @@ function admin_head(string $title): void
     echo '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
         . '<meta name="robots" content="noindex, nofollow"><title>' . h($title) . ' | Pony Games admin</title>'
         . '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Silkscreen&amp;display=swap">'
-        . '<link rel="stylesheet" href="admin.css?v=26"></head><body>';
+        . '<link rel="stylesheet" href="admin.css?v=27"></head><body>';
 }
 
 /** The menu at the top of every admin page. $counts: reports, submissions. */
@@ -124,6 +124,8 @@ function admin_nav(string $active, array $counts = []): void
     ];
     $n = fn($k) => $badge((int)($counts[$k] ?? 0));
     $tips = (int)db()->query('SELECT COUNT(*) FROM bounty_tips WHERE resolved = 0')->fetchColumn(); // new tips on the bounty board
+    // asset requests to approve, and delivered results to check
+    $reqs = (int)db()->query("SELECT COUNT(*) FROM asset_requests WHERE status IN ('pending', 'review')")->fetchColumn();
     $role = admin_role();
     $me = $role === 'owner' ? 'Owner' : h((string)($_SESSION['admin_name'] ?? '')) . ' · ' . (ADMIN_ROLES[$role] ?? '');
     echo '<header><h1><a href="./" class="brand"><img src="/textlogo.png" alt="Pony Games" width="137" height="32"><span class="brand__tag">admin</span></a></h1><nav>'
@@ -136,6 +138,7 @@ function admin_nav(string $active, array $counts = []): void
         . $item('games.php', 'Games', ['games'])
         . $item('resources.php', 'Resources', ['resources'])
         . $item('bounties.php', 'Bounties' . $badge($tips), ['bounty-board'])
+        . $item('requests.php', 'Requests' . $badge($reqs), ['requests'])
         . $item('jams.php', 'Jams', ['jams'])
         . '<span class="sep" aria-hidden="true"></span>'
         . $item('stats.php', 'Stats', ['stats'])

@@ -234,9 +234,9 @@ render_page_start($tab === 'settings' ? 'Settings' : 'Your account');
 <?php else: $allGames = all_games(); ?>
       <ul class="sub-list">
 <?php foreach ($mySubs as $sub): $sd = json_decode($sub['data'], true) ?: [];
-        $t = $sub['kind'] === 'edit' ? ($allGames[$sub['game_id']]['title'] ?? 'a game') : ($sd['values']['title'] ?? 'a game'); ?>
+        $t = $sub['kind'] === 'edit' ? ($allGames[$sub['game_id']]['title'] ?? 'a game') : ($sd['values']['title'] ?? $sd['values']['name'] ?? 'a game'); ?>
         <li class="sub-item">
-          <span class="sub-item__kind"><?= $sub['kind'] === 'edit' ? 'Fixed info of' : 'New game' ?></span>
+          <span class="sub-item__kind"><?= ['edit' => 'Fixed info of', 'resource' => 'New resource'][$sub['kind']] ?? 'New game' ?></span>
           <strong class="sub-item__title"><?= h($t) ?></strong>
           <span class="sub-item__status sub-item__status--<?= h($sub['status']) ?>"><?= $sub['status'] === 'open' ? 'Waiting for review' : ($sub['status'] === 'accepted' ? 'Accepted' : 'Not accepted') ?></span>
           <time class="sub-item__date"><?= h(date('M j, Y', (int)$sub['created_at'])) ?></time>

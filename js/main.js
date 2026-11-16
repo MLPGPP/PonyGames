@@ -980,6 +980,23 @@ function initResourceDetailPanel() {
     }
 
 
+    // how to credit the makers (the "attribution" field); "attribution TODO" is a placeholder, not a credit line
+    const creditWrap = panel.querySelector(".detail-panel__credit");
+    if (creditWrap) {
+      const credit = String(item.attribution || "").trim();
+      const show = credit !== "" && !/^attribution\s+todo$/i.test(credit);
+      creditWrap.hidden = !show;
+      creditWrap.querySelector(".detail-panel__credit-text").textContent = show ? credit : "";
+      const copyBtn = creditWrap.querySelector(".detail-panel__credit-copy");
+      copyBtn.textContent = "Copy";
+      copyBtn.onclick = () => {
+        navigator.clipboard?.writeText(credit).then(() => {
+          copyBtn.textContent = "Copied!";
+          setTimeout(() => (copyBtn.textContent = "Copy"), 1500);
+        }, () => {});
+      };
+    }
+
     const assetPacksEl = panel.querySelector(".detail-panel__asset-packs");
     if (assetPacksEl && item.assetPacks.length) {
       assetPacksEl.innerHTML = `<p>${item.assetPacks.join(", ")}</p>`;
@@ -999,7 +1016,7 @@ function initResourceDetailPanel() {
         return `<a class="download-row__btn" href="${downloadURL}" target="_blank" rel="noopener noreferrer">${buttonText}</a>`;
       }
 
-      downloadsEl.innerHTML = [{buttons: item.downloads.map(makeButton), label: item.name}, {buttons: item.assetPackDownloads.map(makeButton), label: item.primaryAssetPack}].map(args =>
+      downloadsEl.innerHTML = [{buttons: (item.downloads || []).map(makeButton), label: item.name}, {buttons: (item.assetPackDownloads || []).map(makeButton), label: item.primaryAssetPack}].map(args =>
         args.buttons.length ? `<div class="download-row">
           <div class="download-row__btns">${args.buttons.join("")}</div>
           <span class="download-row__info">
@@ -1009,7 +1026,7 @@ function initResourceDetailPanel() {
         ).join("");
     }
 
-    common.openPanel(allImages, false, false, item.name, item.tags, item.description, authors);
+    common.openPanel(allImages, false, false, item.name, item.tags, item.description, authors, gameVideos(item));
   }
 
   return { openPanel, closePanel : common.closePanel };
@@ -2409,9 +2426,9 @@ async function initCardGrid(jsonPath) {
   }
   const items = normalizeListData(resourcesJSON, "assets");
   items.forEach((item) => {
-    if (item.primaryAssetPack && resourcesJSON.allAssetPacks && item.primaryAssetPack in resourcesJSON.allAssetPacks) {
-      item.assetPackDownloads = resourcesJSON.allAssetPacks[item.primaryAssetPack].downloads;
-    }
+    // the download links of the resource's asset pack: none when it has no pack, or the pack has no links ({} or [])
+    const pack = item.primaryAssetPack && resourcesJSON.allAssetPacks ? resourcesJSON.allAssetPacks[item.primaryAssetPack] : null;
+    item.assetPackDownloads = (pack && Array.isArray(pack.downloads)) ? pack.downloads : [];
   });
   const itemMap = new Map(items.map((item) => [String(item.id), item]));
 
@@ -2664,6 +2681,13 @@ async function initCardGrid(jsonPath) {
 
   bindCardInteractions(grid, itemMap, detail);
   applyFilters(true);
+
+  // a link to one resource (resources?resource=ID, e.g. from a notification) opens its details
+  const urlResourceId = params.get("resource");
+  if (urlResourceId && detail) {
+    const item = itemMap.get(String(urlResourceId));
+    if (item) detail.openPanel(item);
+  }
 }
 
 /* ==========================================================================

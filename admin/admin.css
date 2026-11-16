@@ -665,3 +665,8 @@ td.nowrap { white-space: nowrap; }
 .tip__outcome { display: flex; gap: 1rem; flex-wrap: wrap; }
 .tip__caret { display: inline-block; margin-left: .15rem; transition: transform .15s; }
 .tip__done[open] .tip__caret { transform: rotate(180deg); }
+
+/* asset requests (admin/requests.php) */
+.req-admin__acts { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-start; margin-top: .6rem; }
+.req-admin__acts > details[open] { flex-basis: 100%; }
+.req-admin__acts > form { margin: 0; }

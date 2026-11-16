@@ -79,7 +79,7 @@ function after_response(callable $job, int $timeLimit = 120): void
  * the .php files, see deploy/nginx-ponygames.conf). The old ones
  * (/games.html) still work; this maps them to the short one, for the stats.
  */
-const CLEAN_PAGES = ['games', 'upcoming', 'resources', 'bounties', 'about', 'rules', 'account', 'login', 'submit'];
+const CLEAN_PAGES = ['games', 'upcoming', 'resources', 'requests', 'bounties', 'about', 'rules', 'account', 'login', 'submit'];
 
 function clean_path(string $p): string
 {
@@ -346,6 +346,31 @@ function db(): PDO
             created_at INTEGER NOT NULL,
             resolved INTEGER NOT NULL DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS stats_days (  -- visits and page views per day, kept after page_views is thinned out (api/track.php)
+            day INTEGER PRIMARY KEY,             -- days since 1970 (UTC)
+            visits INTEGER NOT NULL,
+            views INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS asset_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,           -- who asked (members only)
+            title TEXT NOT NULL,
+            kind TEXT NOT NULL,                 -- key of REQUEST_KINDS (inc/requests.php)
+            description TEXT NOT NULL,
+            refs TEXT NOT NULL DEFAULT '',      -- reference links, one per line
+            for_game TEXT NOT NULL DEFAULT '',  -- what it's for, free text
+            status TEXT NOT NULL DEFAULT 'pending', -- pending, open, claimed, done, closed, rejected
+            claimed_by INTEGER,
+            claimed_at INTEGER,
+            result_url TEXT NOT NULL DEFAULT '',
+            result_note TEXT NOT NULL DEFAULT '',
+            done_at INTEGER,
+            rewarded INTEGER NOT NULL DEFAULT 0, -- a moderator gave the maker stars / the badge
+            mod_note TEXT NOT NULL DEFAULT '',  -- why it was rejected or closed
+            handled_by TEXT NOT NULL DEFAULT '',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS submissions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             kind TEXT NOT NULL,                 -- 'game' (new) or 'edit' (correction)
@@ -455,7 +480,7 @@ function db(): PDO
     // ref_id = your message, post_id = the newest reply, actor_id = who replied) or 'mod'
     // (a moderator handled your report, or a report about your post: ref_id = the report) or 'sub'
     // (your submission was accepted or rejected: ref_id = the submission, link = where to look) or 'tip'
-    // (about your bounty tip: ref_id = the tip, link = where to look)
+    // (about your bounty tip: ref_id = the tip, link = where to look) or 'req' (an asset request: ref_id = the request)
     $ncols = array_column($pdo->query('PRAGMA table_info(notifications)')->fetchAll(), 'name');
     if (!in_array('kind', $ncols, true)) $pdo->exec("ALTER TABLE notifications ADD COLUMN kind TEXT NOT NULL DEFAULT 'update'");
     if (!in_array('ref_id', $ncols, true)) $pdo->exec('ALTER TABLE notifications ADD COLUMN ref_id INTEGER');
@@ -481,6 +506,11 @@ function db(): PDO
     if (!in_array('resolved_by', $tcols, true)) $pdo->exec("ALTER TABLE bounty_tips ADD COLUMN resolved_by TEXT NOT NULL DEFAULT ''");
     // a suggested bounty that was put on the board: its id there (the suggester hears when it's found)
     if (!in_array('made_bounty', $tcols, true)) $pdo->exec('ALTER TABLE bounty_tips ADD COLUMN made_bounty TEXT');
+    // asset requests: until when the maker said they'd need (chosen when claiming, inc/requests.php)
+    $rcols = array_column($pdo->query('PRAGMA table_info(asset_requests)')->fetchAll(), 'name');
+    if (!in_array('claim_until', $rcols, true)) $pdo->exec('ALTER TABLE asset_requests ADD COLUMN claim_until INTEGER');
+    // the resource it became on the resources page (admin/resources.php ?from_request=)
+    if (!in_array('resource_id', $rcols, true)) $pdo->exec('ALTER TABLE asset_requests ADD COLUMN resource_id INTEGER');
     $cols = array_column($pdo->query('PRAGMA table_info(reports)')->fetchAll(), 'name');
     if (!in_array('user_id', $cols, true)) $pdo->exec('ALTER TABLE reports ADD COLUMN user_id INTEGER');
     // how a moderator handled it (admin/index.php ?view=report): action 'none', 'hide' or 'delete',

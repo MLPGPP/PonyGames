@@ -2,6 +2,7 @@
 /**
  * Receives the forms of submit.php (multipart, sent by js/submit.js).
  *   kind=game  a new game
+ *   kind=resource  a new resource (asset) for the resources page
  *   kind=edit  corrections for an existing game (game=<id>); when the pictures were
  *              changed, shots_order is the new order: [{keep: path} | {file: n, cropOf?}]
  *              where n is the index in images[]
@@ -41,7 +42,7 @@ try {
     }
     if (!empty($_POST['website'])) reply(['ok' => true]); // honeypot
 
-    $kind = ($_POST['kind'] ?? '') === 'edit' ? 'edit' : 'game';
+    $kind = in_array($_POST['kind'] ?? '', ['edit', 'resource'], true) ? $_POST['kind'] : 'game';
     $game = null;
     if ($kind === 'edit') {
         $game = find_game($_POST['game'] ?? '');
@@ -60,6 +61,44 @@ try {
         return array_values(array_intersect($allowed, $in)); // keeps our order, drops unknown values
     };
     $url = fn(string $u) => preg_match('#^https?://[^\s<>"]+\.[^\s<>"]+$#i', $u) && strlen($u) <= 500;
+
+    $note = $str('note', 3000, 'note', true);
+    $name = $str('name', 60, 'name');
+    $contact = $str('contact', 120, 'contact info');
+    $isDev = !empty($_POST['is_dev']);
+    $account = current_user();
+    if ($account && $name === '') $name = (string)$account['display_name'];
+
+    if ($kind === 'resource') {
+    /* ---------------- a resource ---------------- */
+    $choices = resource_choices();
+    $v = [];
+    $v['name'] = $str('title', 150, 'name');
+    if (mb_strlen($v['name']) < 2) fail('Please give the resource a name.', 400, 'title');
+    $authors = array_values(array_filter(array_map('trim', explode(',', $str('authors', 400, 'list of makers')))));
+    if (count($authors) > 12) fail('Please list at most 12 makers.', 400, 'authors');
+    foreach ($authors as $a) if (mb_strlen($a) > 60) fail('One of the maker names is too long.', 400, 'authors');
+    $v['author'] = $authors;
+    $v['tags'] = $pick('tags', $choices['tags']);
+    if (!$v['tags']) fail('Please pick at least one type.', 400, 'tags');
+    $lic = (string)($_POST['license'] ?? '');
+    if ($lic === 'other') $lic = $str('license_other', 60, 'license name');
+    elseif ($lic !== '' && !isset($choices['licenses'][$lic])) $lic = '';
+    $v['license'] = $lic;
+    $v['assetPack'] = $str('assetPack', 80, 'asset pack name');
+    $v['description'] = $str('fullDescription', 3000, 'description', true);
+    $v['attribution'] = $str('attribution', 300, 'credit line', true);
+    $downloads = [];
+    foreach (preg_split('/\s+/', $str('downloads', 3000, 'list of download links', true)) ?: [] as $u) {
+        if ($u === '') continue;
+        if (!$url($u)) fail('One of the download links doesn\'t look like a web address (it should start with https://).', 400, 'downloads');
+        $downloads[] = $u;
+    }
+    if (!$downloads) fail('Please add at least one link where the resource can be downloaded.', 400, 'downloads');
+    if (count($downloads) > 10) fail('Please share at most 10 download links.', 400, 'downloads');
+    $v['downloads'] = array_values(array_unique($downloads));
+    $data = ['values' => $v, 'imageUrls' => []];
+    } else {
 
     /* ---------------- the game fields ---------------- */
     $v = [];
@@ -116,13 +155,6 @@ try {
     $imageUrls = array_values(array_filter(array_map('trim', preg_split('/\s+/', $str('image_urls', 3000, 'list of picture links', true)) ?: [])));
     foreach ($imageUrls as $u) if (!$url($u)) fail('One of the picture links doesn\'t look like a web address.', 400, 'image_urls');
 
-    $note = $str('note', 3000, 'note', true);
-    $name = $str('name', 60, 'name');
-    $contact = $str('contact', 120, 'contact info');
-    $isDev = !empty($_POST['is_dev']);
-    $account = current_user();
-    if ($account && $name === '') $name = (string)$account['display_name'];
-
     /* ---------------- what changed (corrections) ---------------- */
     $data = ['values' => $v];
     if ($kind === 'edit') {
@@ -169,6 +201,7 @@ try {
         $data = ['changes' => $changes];
     }
     $data['imageUrls'] = $imageUrls;
+    } // end of games and corrections
 
     if (!rate_ok('submit', 6, 3600) || !rate_ok('submit-day', 25, 86400)) {
         fail('Thanks for all the help! Please wait a bit before sending more.', 429);

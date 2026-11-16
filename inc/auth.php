@@ -20,6 +20,7 @@ const BADGES = [
     'fact-checker'  => ['Fact Checker',   'Corrected information about a game.', '🔍'],
     'link-fixer'    => ['Link Fixer',     'Reported or fixed a broken download link.', '🔗'],
     'archivist'     => ['Archivist',      'Saved screenshots, builds or history of old games.', '📦'],
+    'asset-maker'   => ['Asset Maker',    'Made an asset someone asked for on the request board.', '🎨'],
     'game-dev'      => ['Game Developer', 'Made one of the games on Pony Games.', '🛠️'],
     'jammer'        => ['Jammer',         'Took part in a Pony Games jam.', '🏁'],
     'early-pony'    => ['Early Pony',     'One of the first ponies with an account.', '🌅'],
@@ -508,6 +509,10 @@ function delete_user(int $userId, bool $deletePosts = false): void
         $pdo->prepare('UPDATE posts SET user_id = NULL WHERE user_id = ?')->execute([$userId]);
     }
     $pdo->prepare('UPDATE bounty_tips SET user_id = NULL WHERE user_id = ?')->execute([$userId]);
+    // their asset requests go; what they had claimed is open again
+    $pdo->prepare('DELETE FROM asset_requests WHERE user_id = ?')->execute([$userId]);
+    $pdo->prepare("UPDATE asset_requests SET status = 'open', claimed_by = NULL, claimed_at = NULL WHERE claimed_by = ? AND status = 'claimed'")->execute([$userId]);
+    $pdo->prepare('UPDATE asset_requests SET claimed_by = NULL WHERE claimed_by = ?')->execute([$userId]);
     foreach (['user_bookmarks', 'user_badges', 'star_events', 'user_tokens', 'notifications'] as $t) {
         $pdo->prepare("DELETE FROM $t WHERE user_id = ?")->execute([$userId]);
     }

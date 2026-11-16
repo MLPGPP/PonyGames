@@ -4,6 +4,7 @@
 declare(strict_types=1);
 require __DIR__ . '/../inc/content.php';
 require __DIR__ . '/../inc/admin_ui.php';
+require __DIR__ . '/../inc/screenshots.php';
 
 $csrf = admin_require();
 
@@ -62,18 +63,61 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             $old = $isNew ? ['id' => (int)$id, 'name' => '', 'description' => '', 'attribution' => '', 'primaryAssetPack' => '', 'license' => [],
                 'author' => [], 'tags' => [], 'assetPacks' => [], 'downloads' => [], 'previews' => [], 'thumbnail' => ''] : $data['assets'][$index];
             $r = resource_from_post($_POST, $old, known_licenses($data));
-            $files = uploaded_list('images');
-            if ($files) {
-                $paths = store_site_images($files, 'asset_previews/' . $id, 0);
-                $r['previews'] = array_merge($r['previews'], $paths);
-                if ($r['thumbnail'] === '' && $paths) $r['thumbnail'] = $paths[0];
+            // the picture editor (same as for games): new order, crops, removed and added pictures
+            $shotItems = null;
+            $shotOrder = json_decode((string)($_POST['shots_order'] ?? ''), true);
+            if (is_array($shotOrder)) {
+                $current = resource_shots($old);
+                $files = $_FILES['shot_files'] ?? null;
+                $finfo = new finfo(FILEINFO_MIME_TYPE);
+                $shotItems = [];
+                $keptOnly = [];
+                foreach ($shotOrder as $it) {
+                    if (isset($it['keep']) && in_array($it['keep'], $current, true)) {
+                        $shotItems[] = ['keep' => $it['keep']];
+                        $keptOnly[] = $it['keep'];
+                    } elseif (isset($it['file']) && $files && isset($files['tmp_name'][(int)$it['file']])) {
+                        $i = (int)$it['file'];
+                        if ($files['error'][$i] !== UPLOAD_ERR_OK) throw new RuntimeException('A picture didn\'t upload (too big?). Try again.');
+                        $ext = SHOT_EXTS[$finfo->file($files['tmp_name'][$i])] ?? null;
+                        if (!$ext || @getimagesize($files['tmp_name'][$i]) === false) throw new RuntimeException('Pictures have to be JPG, PNG, WebP or GIF.');
+                        $shotItems[] = ['file' => $files['tmp_name'][$i], 'ext' => $ext];
+                        $keptOnly = null;
+                    }
+                }
+                if (count($shotItems) > 40) throw new RuntimeException('That are a lot of pictures, please keep it under 40.');
+                if ($keptOnly !== null && $keptOnly === $current) $shotItems = null; // nothing changed: leave the files alone
+            } elseif (empty($_POST) && (int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 0) {
+                throw new RuntimeException('Too much to upload at once (server limit). Save fewer new pictures at a time.');
             }
             $posted = $r;
             if (trim($r['name']) === '') $errors[] = 'The name is empty.';
             foreach ($r['downloads'] as $u) if (!preg_match('#^https?://#i', $u)) $errors[] = "Download link “{$u}” should start with https://";
             if (!$errors) {
+                if ($shotItems !== null) {
+                    // the first picture is the card picture; the popup shows all of them, except shared placeholders (music.png…)
+                    $paths = save_resource_shots((int)$id, $shotItems);
+                    $shared = [];
+                    foreach ($data['assets'] as $a) if ((string)$a['id'] !== (string)$id) $shared[(string)$a['thumbnail']] = true;
+                    $r['thumbnail'] = $paths[0] ?? '';
+                    $r['previews'] = array_values(array_filter($paths, fn($p) => resource_shot_parts($p) !== null || !isset($shared[$p])));
+                }
                 if ($isNew) $data['assets'][] = $r; else $data['assets'][$index] = $r;
                 save_content('resources', refresh_resource_lists($data), ($isNew ? 'Added' : 'Edited') . " resource #$id " . $r['name']);
+                // made for an asset request (requests.php): link them, and tell the maker and the requester
+                if ($isNew && !empty($_POST['from_request'])) {
+                    require_once __DIR__ . '/../inc/requests.php';
+                    $req = request_get((int)$_POST['from_request']);
+                    if ($req && $req['resource_id'] === null) {
+                        db()->prepare('UPDATE asset_requests SET resource_id = ?, updated_at = ? WHERE id = ?')->execute([(int)$id, time(), (int)$req['id']]);
+                        $res = ['/resources?resource=' . (int)$id];
+                        foreach (array_unique(array_filter([(int)$req['claimed_by'], (int)$req['user_id']])) as $uid) {
+                            notify_linked('req', $uid, '', '“' . $r['name'] . '” is in the resources now 🧩',
+                                'The asset made for the request board can now be found by every pony on the resources page.', (int)$req['id'], $res[0]);
+                        }
+                        discord_request_event('resource', $req, ['by' => admin_who(), 'note' => 'Resource #' . $id . ': ' . $r['name']]);
+                    }
+                }
                 $_SESSION['admin_flash'] = ($isNew ? 'Added' : 'Saved') . " “{$r['name']}”.";
                 header('Location: resources.php?id=' . urlencode($id)); exit;
             }
@@ -91,6 +135,21 @@ $editing = $posted ?? (isset($_GET['id']) ? ($assets[(string)$_GET['id']] ?? nul
 if ($isNew && !$editing) {
     $editing = ['id' => null, 'name' => '', 'description' => '', 'attribution' => '', 'primaryAssetPack' => '', 'license' => [], 'author' => [],
         'tags' => [], 'assetPacks' => [], 'downloads' => [], 'previews' => [], 'thumbnail' => ''];
+}
+// ?new&from_request=ID: a finished asset request, filled in (add pictures and a license, then save)
+$fromRequest = null;
+if ($isNew && !empty($_REQUEST['from_request'])) {
+    require_once __DIR__ . '/../inc/requests.php';
+    $fromRequest = request_get((int)$_REQUEST['from_request']);
+    if ($fromRequest && !isset($posted)) {
+        $kindTags = ['sprites' => ['2D', 'Sprite'], 'animation' => ['2D', 'Sprite'], 'backgrounds' => ['2D', 'Background', 'Tileset'], 'ui' => ['2D'],
+            'music' => ['Music'], 'sfx' => ['Sound Effect'], '3d' => ['3D'], 'fonts' => [], 'code' => [], 'writing' => [], 'voice' => [], 'other' => []];
+        $editing['name'] = (string)$fromRequest['title'];
+        $editing['author'] = array_filter([(string)($fromRequest['maker'] ?? '')]);
+        $editing['description'] = trim((string)$fromRequest['description'] . ((string)$fromRequest['result_note'] !== '' ? "\n\n" . $fromRequest['result_note'] : ''));
+        $editing['downloads'] = array_filter([(string)$fromRequest['result_url']]);
+        $editing['tags'] = array_values(array_intersect($kindTags[$fromRequest['kind']] ?? [], (array)($data['allTags'] ?? [])));
+    }
 }
 
 admin_head($editing ? ($editing['name'] ?: 'New resource') : 'Resources');
@@ -127,6 +186,11 @@ if (isset($_GET['packs'])): ?>
     <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
     <input type="hidden" name="id" value="<?= $isNew ? '' : h((string)$r['id']) ?>">
     <input type="hidden" name="do" value="save">
+<?php if ($fromRequest): ?>
+    <input type="hidden" name="from_request" value="<?= (int)$fromRequest['id'] ?>">
+    <p class="flash">Filled in from the asset request “<?= h((string)$fromRequest['title']) ?>”, made by <?= h((string)($fromRequest['maker'] ?? '?')) ?>.
+      Check the type and license, add some pictures, then save. The maker and the requester get a message with a link to it.</p>
+<?php endif ?>
     <div class="panel">
       <div class="grid2">
         <label class="span2">Name <input name="name" required value="<?= h($r['name']) ?>"></label>
@@ -146,16 +210,23 @@ if (isset($_GET['packs'])): ?>
       </fieldset>
       <label>Downloads <span class="muted">one link per line</span><textarea name="downloads" rows="2"><?= h(implode("\n", (array)$r['downloads'])) ?></textarea></label>
     </div>
-    <div class="panel">
-      <h3>Pictures</h3>
-      <div class="grid2">
-        <label>Thumbnail <input name="thumbnail" value="<?= h((string)$r['thumbnail']) ?>"></label>
-        <label>Previews <span class="muted">one path per line</span><textarea name="previews" rows="3"><?= h(implode("\n", (array)$r['previews'])) ?></textarea></label>
+    <div class="panel" id="pictures">
+      <h3>Pictures &amp; videos</h3>
+      <?php $tiles = array_map(fn($p) => ['path' => $p, 'managed' => resource_shot_parts($p) !== null], resource_shots($r)); ?>
+      <div id="shot-editor" class="shot-editor" data-tiles="<?= h(json_encode($tiles, JSON_UNESCAPED_SLASHES)) ?>">
+        <p class="muted shot-help">Drag the pictures into the best order (or use ← →); the first one is the picture on the card. ★ makes a picture the first,
+          ✂ crops, 🗑 removes. The popup shows them all. When you save, they're stored as <code>asset_previews/<?= $isNew ? '&lt;new id&gt;' : h((string)$r['id']) ?>/0, 1, 2…</code>
+          (shared placeholders like music.png stay where they are).</p>
+        <ol class="shot-grid" id="shot-grid"></ol>
+        <label class="drop-add" id="shot-add">
+          <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple>
+          <span><strong>＋ Add pictures</strong> or drop them here</span>
+        </label>
+        <input type="hidden" name="shots_order" id="shots-order">
+        <input type="file" name="shot_files[]" id="shots-files" multiple hidden>
       </div>
-      <div class="shots small-shots"><?php foreach (array_unique(array_filter(array_merge([(string)$r['thumbnail']], (array)$r['previews']))) as $src): ?>
-        <figure><img src="<?= h($src) ?>" alt="" loading="lazy"><figcaption><?= h(basename($src)) ?></figcaption></figure><?php endforeach ?></div>
-      <label>Upload previews <span class="muted">saved in asset_previews/<?= $isNew ? '&lt;new id&gt;' : h((string)$r['id']) ?>/</span>
-        <input type="file" name="images[]" multiple accept="image/png,image/jpeg,image/webp,image/gif"></label>
+      <label>Videos <span class="muted">YouTube links or https links to a video file (.mp4, .webm, …), one per line: shown after the pictures</span>
+        <textarea name="videos" rows="2" placeholder="https://www.youtube.com/watch?v=…"><?= h(implode("\n", array_filter((array)($r['videos'] ?? []), 'is_string'))) ?></textarea></label>
     </div>
     <div class="savebar"><button class="primary"><?= $isNew ? 'Add resource' : 'Save changes' ?></button> <a href="resources.php">Cancel</a></div>
   </form>
@@ -219,4 +290,6 @@ if (isset($_GET['packs'])): ?>
 <?php endif ?>
 </main>
 <script src="admin.js?v=3"></script>
+<script src="/js/shot-editor.js?v=1"></script>
+<script src="screenshots.js?v=3"></script>
 </body></html>

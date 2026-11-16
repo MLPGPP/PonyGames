@@ -27,7 +27,7 @@ blocks private folders. The site needs PHP; opening the files directly
 
 ## Page addresses
 
-Pages have short addresses: `/games`, `/upcoming`, `/resources`, `/bounties`,
+Pages have short addresses: `/games`, `/upcoming`, `/resources`, `/requests`, `/bounties`,
 `/about`, `/rules`, `/account`, `/login`, `/submit` (and `/game/12-title` for
 games). nginx maps them to the `.php` files (`rewrite` lines in
 `deploy/nginx-ponygames.conf`; on aaPanel they go under Website → URL rewrite).
@@ -137,6 +137,46 @@ server config. The stats count old and new as one page.
   someone presses play (then from youtube-nocookie.com); the cover picture
   comes from i.ytimg.com. Video files play in the browser's own player and
   only load once they're shown (the first slide loads just its length).
+
+## Submitting resources
+
+`/submit?resource` (third tab on the submit page, also linked from Resources)
+lets anyone share an asset: name, makers, type(s), license, asset pack,
+description, how to credit, download links (at least one) and up to 12 preview
+pictures (`js/submit-resource.js`, same picture editor as for games). It goes to
+`api/submit.php` as `kind=resource` and shows up under **Admin → Submissions**
+as "🧩 New resource". **Accept** with *Publish* ticked adds it to
+`data/resources.json` (previews in `asset_previews/<id>/`) and the sender gets a
+message under the bell with a link to it (`/resources?resource=<id>` opens it).
+
+## Asset requests
+
+`/requests` (`requests.php`, logic in `inc/requests.php`) is the bounty board
+the other way around: members ask for assets ("a Rarity walk cycle, 8 frames")
+and other members make them.
+
+1. A member (logged in, email confirmed) posts a request: title, kind, a
+   description, up to 5 reference links and what it's for. Max 3 a day.
+2. A moderator approves or rejects it in **Admin → Requests**, with an optional
+   message. Only approved requests are on the board.
+3. Any other member clicks **I'll make this** and picks how long they need
+   (3 days to 3 months, `REQUEST_CLAIM_CHOICES`; **Need more time?** adds
+   more, up to half a year ahead). When that runs out without a result the
+   request is open again. Nobody can make more than 3 things at once. **Give it up**
+   puts it back on the board.
+4. The maker clicks **It's done!** and adds a link to the result. It then
+   waits for a moderator (**Admin → Requests → To check**), who either
+   **approves** it (the requester gets it, the maker gold stars and the 🎨
+   Asset Maker badge; tick *Also add it to the resources* to go on to the
+   resource editor, filled in from the request) or **sends it back** to the
+   maker with what to fix. A done request can also be added to the
+   resources later (**🧩 Add to the resources**).
+
+The requester can close their request at any time. Everyone involved hears
+about every step under the bell 🔔 and in the daily email; moderators get it
+all in Discord (`DISCORD_WEBHOOK_REQUESTS`, or the submissions channel).
+Moderators can also close, reopen and delete requests. The admin menu shows
+how many requests wait for approval or for a reward.
 
 ## Bounties
 
@@ -454,6 +494,9 @@ With `DISCORD_WEBHOOK_REPORTS` and `DISCORD_WEBHOOK_SUBMISSIONS` in `.env`
 - **Bounties channel** (`DISCORD_WEBHOOK_BOUNTIES`; empty = the submissions
   channel): every new tip or suggested bounty, a tip closed or deleted, a
   suggestion turned into a bounty, and a bounty marked as found.
+- **Requests channel** (`DISCORD_WEBHOOK_REQUESTS`; empty = the submissions
+  channel): new asset requests and every step after (approved, claimed, done,
+  claim ran out, closed, maker rewarded).
 
 Each message links to the right page in /admin. Mentions like `@everyone` in
 what visitors wrote don't ping anyone. The message goes out after the page

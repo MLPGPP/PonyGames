@@ -4,6 +4,7 @@
  *   DISCORD_WEBHOOK_REPORTS      new reports, and what was done with them
  *   DISCORD_WEBHOOK_SUBMISSIONS  new submissions, and whether they were accepted
  *   DISCORD_WEBHOOK_BOUNTIES     bounty tips and found bounties (empty: the submissions channel)
+ *   DISCORD_WEBHOOK_REQUESTS     asset requests (/requests) (empty: the submissions channel)
  * Make a webhook in Discord: channel settings -> Integrations -> Webhooks ->
  * New Webhook -> Copy Webhook URL, and put it in .env. Leave it empty to send nothing.
  *
@@ -18,8 +19,9 @@ const DISCORD_COLORS = ['report' => 0xE5484D, 'new' => 0x8E6CEF, 'ok' => 0x2FBF7
 
 function discord_webhook(string $channel): string
 {
-    $url = trim(env(['reports' => 'DISCORD_WEBHOOK_REPORTS', 'bounties' => 'DISCORD_WEBHOOK_BOUNTIES'][$channel] ?? 'DISCORD_WEBHOOK_SUBMISSIONS'));
-    if ($url === '' && $channel === 'bounties') $url = trim(env('DISCORD_WEBHOOK_SUBMISSIONS')); // bounty tips go with the submissions if there's no own channel
+    $url = trim(env(['reports' => 'DISCORD_WEBHOOK_REPORTS', 'bounties' => 'DISCORD_WEBHOOK_BOUNTIES', 'requests' => 'DISCORD_WEBHOOK_REQUESTS'][$channel] ?? 'DISCORD_WEBHOOK_SUBMISSIONS'));
+    // bounty tips and asset requests go with the submissions if they have no channel of their own
+    if ($url === '' && ($channel === 'bounties' || $channel === 'requests')) $url = trim(env('DISCORD_WEBHOOK_SUBMISSIONS'));
     return preg_match('#^https://(?:(?:ptb|canary)\.)?discord(?:app)?\.com/api/webhooks/\d+/[\w-]+$#', $url) ? $url : '';
 }
 
@@ -169,6 +171,26 @@ function discord_submission_new(int $subId): void
         $d = json_decode((string)$s['data'], true) ?: [];
         $isEdit = $s['kind'] === 'edit';
         $v = $d['values'] ?? [];
+        if ($s['kind'] === 'resource') {
+            $from = $s['member'] !== null ? (string)$s['member'] . ' (account)' : (($s['name'] ?? '') !== '' ? (string)$s['name'] : 'someone without an account');
+            if ((int)($s['is_dev'] ?? 0)) $from .= ' · the maker';
+            discord_send('submissions', [
+                'title' => '🧩 New resource submitted: ' . (string)($v['name'] ?? 'untitled'),
+                'url' => discord_admin_url('view=submission&id=' . $subId),
+                'color' => DISCORD_COLORS['new'],
+                'description' => discord_quote((string)($v['description'] ?? '')),
+                'fields' => [
+                    ['Made by', implode(', ', (array)($v['author'] ?? [])), true],
+                    ['Type', implode(', ', (array)($v['tags'] ?? [])), true],
+                    ['License', (string)($v['license'] ?? ''), true],
+                    ['From', $from, true],
+                    ['Previews', count($d['images'] ?? []) ? (string)count($d['images']) : '', true],
+                    ['Note', discord_quote((string)($s['note'] ?? ''))],
+                    ['Review it', '[Open in the admin panel](' . discord_admin_url('view=submission&id=' . $subId) . ')'],
+                ],
+            ]);
+            return;
+        }
         $from = $s['member'] !== null ? (string)$s['member'] . ' (account)' : (($s['name'] ?? '') !== '' ? (string)$s['name'] : 'someone without an account');
         if ((int)($s['is_dev'] ?? 0)) $from .= ' · the developer';
         $changes = array_keys($d['changes'] ?? []);
@@ -205,7 +227,7 @@ function discord_game_title(string $gid): string
 function discord_submission_done(int $subId, array $info): void
 {
     if (discord_webhook('submissions') === '') return;
-    $what = $info['edit'] ? 'Correction' : 'Game';
+    $what = $info['edit'] ? 'Correction' : (!empty($info['resource']) ? 'Resource' : 'Game');
     discord_send('submissions', [
         'title' => ($info['accepted'] ? '✅ ' . $what . ' accepted: ' : '❌ ' . $what . ' rejected: ') . $info['name'],
         'url' => discord_admin_url('view=submission&id=' . $subId),
@@ -214,7 +236,7 @@ function discord_submission_done(int $subId, array $info): void
             ['Game', $info['live'] ? discord_game((string)$info['game_id']) : '', true],
             ['By', (string)($info['by'] ?: 'a moderator'), true],
             ['Sent by', (string)$info['member'], true],
-            ['On the site', $info['accepted'] ? ($info['published'] ? 'Published right away' : 'Not yet, still has to go into games.json') : '', true],
+            ['On the site', $info['accepted'] ? ($info['published'] ? 'Published right away' : 'Not yet, still has to go into ' . (!empty($info['resource']) ? 'resources.json' : 'games.json')) : '', true],
             ['Reply to the sender', discord_quote((string)$info['reply']) ?: ($info['notified'] ? '_standard text_' : '')],
             ['Rewards', (string)$info['rewards']],
         ],
@@ -280,6 +302,43 @@ function discord_bounty_event(string $kind, array $info): void
             ['Message to the tipper', discord_quote((string)($info['reply'] ?? '')) ?: (!empty($info['notified']) && $kind === 'done' ? '_standard text_' : '')],
             ['Rewards', (string)($info['rewards'] ?? '')],
             ['Told', (string)($info['told'] ?? '')],
+        ],
+    ]);
+}
+
+/**
+ * Something happened with an asset request (inc/requests.php).
+ * $kind: new, approved, rejected, claimed, released, expired, done, closed, reopened, rewarded, deleted
+ * $info: by (moderator), maker, note, rewards
+ */
+function discord_request_event(string $kind, array $r, array $info = []): void
+{
+    if (discord_webhook('requests') === '') return;
+    $titles = [
+        'new' => '🎨 New asset request', 'approved' => '✅ Request approved', 'rejected' => '❌ Request not accepted',
+        'claimed' => '✋ Request claimed', 'extended' => '⏳ More time asked', 'delivered' => '📦 Delivered, please check', 'sent_back' => '↩️ Sent back to the maker', 'resource' => '🧩 Added to the resources', 'released' => '↩️ Claim given up', 'expired' => '⌛ Claim ran out',
+        'done' => '🎉 Request done', 'closed' => '🔒 Request closed', 'reopened' => '🔓 Request opened again',
+        'rewarded' => '⭐ Maker rewarded', 'deleted' => '🗑️ Request deleted',
+    ];
+    $kinds = defined('REQUEST_KINDS') ? REQUEST_KINDS : [];
+    discord_send('requests', [
+        'title' => ($titles[$kind] ?? 'Asset request') . ': ' . $r['title'],
+        'url' => request_origin() . ($kind === 'new' ? '/admin/requests.php?show=pending' : ($kind === 'delivered' ? '/admin/requests.php?show=review' : '/requests?r=' . (int)$r['id'] . '#request-' . (int)$r['id'])),
+        'color' => in_array($kind, ['new', 'delivered'], true) ? DISCORD_COLORS['new']
+            : (in_array($kind, ['rejected', 'closed', 'expired', 'released', 'deleted', 'sent_back'], true) ? DISCORD_COLORS['no'] : DISCORD_COLORS['ok']),
+        'description' => $kind === 'new' ? discord_quote((string)$r['description'], 600) : '',
+        'fields' => [
+            ['Type', (string)($kinds[$r['kind']] ?? $r['kind']), true],
+            ['Asked by', (string)($r['requester'] ?? ''), true],
+            ['For', (string)$r['for_game'], true],
+            ['Maker', (string)($info['maker'] ?? ''), true],
+            ['By', (string)($info['by'] ?? ''), true],
+            ['References', $kind === 'new' ? discord_text((string)$r['refs'], 600) : ''],
+            ['Result', in_array($kind, ['done', 'delivered'], true) ? trim((string)$r['result_url'] . "\n" . discord_quote((string)$r['result_note'], 300)) : ''],
+            ['Message', discord_quote((string)($info['note'] ?? ''))],
+            ['Rewards', (string)($info['rewards'] ?? '')],
+            ['Look at it', $kind === 'new' ? '[Approve or reject in the admin panel](' . request_origin() . '/admin/requests.php?show=pending)'
+                : ($kind === 'delivered' ? '[Check it in the admin panel](' . request_origin() . '/admin/requests.php?show=review)' : '')],
         ],
     ]);
 }

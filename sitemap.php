@@ -7,7 +7,7 @@ header('Content-Type: application/xml; charset=utf-8');
 $base = site_url();
 echo '<?xml version="1.0" encoding="UTF-8"?>', "\n";
 echo '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">', "\n";
-foreach (['/', '/games', '/upcoming', '/resources', '/bounties', '/submit', '/about', '/rules'] as $p) {
+foreach (['/', '/games', '/upcoming', '/resources', '/requests', '/bounties', '/submit', '/about', '/rules'] as $p) {
     echo '  <url><loc>', h($base . $p), "</loc></url>\n";
 }
 foreach (all_games() as $g) {

@@ -2,7 +2,9 @@
 /**
  * Admin: stats. Visits and page views (api/track.php), downloads and plays,
  * and what the community did (accounts, reviews, discussion, likes,
- * bookmarks, submissions, reports) over the last 7, 30, 90 or 365 days.
+ * bookmarks, submissions, reports) over the last 7, 30, 90 or 365 days, or all time.
+ * Page views older than about a year are thinned out (api/track.php): only the
+ * visits and views per day stay, in stats_days, so "All time" still counts them.
  *
  * Days are UTC. A "visit" is one visitor on one day: page views carry no
  * cookie and the visitor hash changes every day, so the same person on two
@@ -15,7 +17,7 @@ require __DIR__ . '/../inc/admin_ui.php';
 
 admin_require();
 
-const STAT_PERIODS = [7 => '7 days', 30 => '30 days', 90 => '90 days', 365 => '12 months'];
+const STAT_PERIODS = [7 => '7 days', 30 => '30 days', 90 => '90 days', 365 => '12 months', 0 => 'All time'];
 $days = (int)($_GET['days'] ?? 30);
 if (!isset(STAT_PERIODS[$days])) $days = 30;
 
@@ -32,6 +34,18 @@ if ($oneDay !== null) {
     $len = 1;
     $chartFrom = $oneDay - 13;                       // the two weeks up to that day
     $chartTo = min($today, $oneDay + 7);             // and the week after, if it's there
+} elseif ($days === 0) {                            // all time: from the first day anything was counted
+    $to = $today;
+    $starts = array_filter([
+        (int)$pdo->query('SELECT COALESCE(MIN(day), 0) FROM page_views')->fetchColumn(),
+        (int)$pdo->query('SELECT COALESCE(MIN(day), 0) FROM stats_days')->fetchColumn(),
+        intdiv((int)$pdo->query('SELECT COALESCE(MIN(created_at), 0) FROM users')->fetchColumn(), 86400),
+        (int)$pdo->query('SELECT COALESCE(MIN(day), 0) FROM game_clicks')->fetchColumn(),
+    ]);
+    $from = $starts ? min(min($starts), $today) : $today;
+    $len = $to - $from + 1;
+    $chartFrom = $from;
+    $chartTo = $to;
 } else {
     $to = $today;
     $from = $today - $days + 1;                      // first day of this period
@@ -40,7 +54,7 @@ if ($oneDay !== null) {
     $chartTo = $to;
 }
 $prevFrom = $from - $len;                            // the period before, to compare with
-$fromTs = $from * 86400;
+$fromTs = $days === 0 && $oneDay === null ? 0 : $from * 86400; // all time: also what came before the first counted day
 $toTs = ($to + 1) * 86400;                           // end (exclusive)
 $prevTs = $prevFrom * 86400;
 $periodName = $oneDay !== null ? 'day' : STAT_PERIODS[$days];
@@ -91,9 +105,16 @@ $count = function (string $table, string $where = '1') use ($one, $fromTs, $toTs
 $byDay = function (string $sql) use ($one, $from, $to, $prevFrom): array {
     return [$one($sql, [$from, $to]), $one($sql, [$prevFrom, $from - 1])];
 };
+// days that only live on in stats_days (older than what page_views keeps); site-wide totals only
+$keptFrom = (int)$one('SELECT COALESCE(MIN(day), 0) FROM page_views') ?: $today + 1;
+$oldDays = function (string $col) use ($one, $pvF, $keptFrom): callable {
+    return fn(int $a, int $b) => $pvF === '' ? $one("SELECT COALESCE(SUM($col), 0) FROM stats_days WHERE day BETWEEN ? AND ? AND day < ?", [$a, $b, $keptFrom]) : 0;
+};
+$oldVisits = $oldDays('visits');
+$oldViews = $oldDays('views');
 $tiles = [
-    'Visits' => $byDay("SELECT COUNT(DISTINCT day || '|' || visitor) FROM page_views WHERE day BETWEEN ? AND ?$pvF"),
-    'Page views' => $byDay("SELECT COALESCE(SUM(hits), 0) FROM page_views WHERE day BETWEEN ? AND ?$pvF"),
+    'Visits' => array_map(fn($n, $range) => $n + $oldVisits(...$range), $byDay("SELECT COUNT(DISTINCT day || '|' || visitor) FROM page_views WHERE day BETWEEN ? AND ?$pvF"), [[$from, $to], [$prevFrom, $from - 1]]),
+    'Page views' => array_map(fn($n, $range) => $n + $oldViews(...$range), $byDay("SELECT COALESCE(SUM(hits), 0) FROM page_views WHERE day BETWEEN ? AND ?$pvF"), [[$from, $to], [$prevFrom, $from - 1]]),
     'Downloads' => $byDay("SELECT COUNT(*) FROM game_clicks WHERE kind = 'download' AND day BETWEEN ? AND ?$gF"),
     'Plays' => $byDay("SELECT COUNT(*) FROM game_clicks WHERE kind = 'play' AND day BETWEEN ? AND ?$gF"),
 ];
@@ -115,6 +136,10 @@ foreach ($rows("SELECT day, COUNT(DISTINCT visitor) v, SUM(hits) h FROM page_vie
     $visitsDay[(int)$r['day']] = (int)$r['v'];
     $viewsDay[(int)$r['day']] = (int)$r['h'];
 }
+if ($pvF === '') foreach ($rows('SELECT day, visits, views FROM stats_days WHERE day BETWEEN ? AND ? AND day < ?', [$chartFrom, $chartTo, $keptFrom]) as $r) {
+    $visitsDay[(int)$r['day']] = (int)$r['visits'];
+    $viewsDay[(int)$r['day']] = (int)$r['views'];
+}
 foreach ($rows("SELECT day, kind, COUNT(*) n FROM game_clicks WHERE day BETWEEN ? AND ?$gF GROUP BY day, kind", [$chartFrom, $chartTo]) as $r) {
     if ($r['kind'] === 'download') $dlDay[(int)$r['day']] = (int)$r['n'];
     else $playDay[(int)$r['day']] = (int)$r['n'];
@@ -127,7 +152,7 @@ if ($gameId !== null) { // likes and bookmarks of the chosen game, per day
     }
 }
 // a year per day is too fine to read: group by week
-$step = $oneDay === null && $days > 90 ? 7 : 1;
+$step = $oneDay !== null ? 1 : ($len > 400 ? 30 : ($len > 90 ? 7 : 1)); // more than a year: per 30 days
 $bucket = function (array $perDay) use ($step): array {
     if ($step === 1) return $perDay;
     $out = [];
@@ -193,6 +218,7 @@ $firstView = $one('SELECT COALESCE(MIN(day), 0) FROM page_views');
 function stat_day(int $day, int $step = 1): string
 {
     $s = gmdate('M j', $day * 86400);
+    if ($step >= 30) return gmdate('M j, Y', $day * 86400) . ' + 30 days';
     return $step > 1 ? 'week of ' . $s : $s;
 }
 
@@ -268,6 +294,7 @@ function line_chart(string $title, array $lines, int $step, ?int $mark = null): 
 
 function delta(int $now, int $before): string
 {
+    if ($GLOBALS['days'] === 0 && $GLOBALS['oneDay'] === null) return ''; // all time: nothing to compare with
     if ($before === 0) return $now > 0 ? '<span class="tile__delta">new</span>' : '<span class="tile__delta">–</span>';
     $p = (int)round(($now - $before) / $before * 100);
     $cls = $p > 0 ? ' is-up' : ($p < 0 ? ' is-down' : '');
@@ -317,8 +344,8 @@ admin_nav('stats');
       </form>
     </div>
   </div>
-  <p class="muted stats__note"><?php if ($oneDay !== null): ?><?= gmdate('l, F j, Y', $oneDay * 86400) ?><?= $oneDay === $today ? ' (today, so far)' : '' ?> (UTC), compared with the day before. The charts show the days around it; click a day in a chart to pick it.<?php else: ?>Last <?= STAT_PERIODS[$days] ?> (<?= gmdate('M j', $fromTs) ?> – today, UTC), compared with the <?= STAT_PERIODS[$days] ?> before.<?= $step === 1 ? ' Click a day in a chart to see just that day.' : '' ?><?php endif ?>
-<?php if (!$firstView): ?> Page views are counted from now on; there are none yet.<?php elseif ($firstView > $prevFrom): ?> Page views are counted since <?= gmdate('M j, Y', $firstView * 86400) ?>.<?php endif ?></p>
+  <p class="muted stats__note"><?php if ($oneDay !== null): ?><?= gmdate('l, F j, Y', $oneDay * 86400) ?><?= $oneDay === $today ? ' (today, so far)' : '' ?> (UTC), compared with the day before. The charts show the days around it; click a day in a chart to pick it.<?php elseif ($days === 0): ?>All time: everything since <?= gmdate('M j, Y', $from * 86400) ?> (UTC).<?= $pvF === '' ? '' : ' Page views of one game are kept for about a year.' ?> Lists like top pages and sources cover the last year or so; older page views are only kept as totals per day.<?php else: ?>Last <?= STAT_PERIODS[$days] ?> (<?= gmdate('M j', $fromTs) ?> – today, UTC), compared with the <?= STAT_PERIODS[$days] ?> before.<?= $step === 1 ? ' Click a day in a chart to see just that day.' : '' ?><?php endif ?>
+<?php if (!$firstView): ?> Page views are counted from now on; there are none yet.<?php elseif ($firstView > $prevFrom && $days !== 0): ?> Page views are counted since <?= gmdate('M j, Y', $firstView * 86400) ?>.<?php endif ?></p>
 
   <div class="tiles">
 <?php foreach ($tiles as $label => [$now, $before]): ?>
@@ -327,14 +354,14 @@ admin_nav('stats');
   </div>
 
   <section class="panel">
-    <?= line_chart('Visits and page views' . ($step > 1 ? ' per week' : ' per day'), [['Visits', '--series-1', $bucket($visitsDay)], ['Page views', '--series-2', $bucket($viewsDay)]], $step, $oneDay) ?>
+    <?= line_chart('Visits and page views' . ($step >= 30 ? ' per 30 days' : ($step > 1 ? ' per week' : ' per day')), [['Visits', '--series-1', $bucket($visitsDay)], ['Page views', '--series-2', $bucket($viewsDay)]], $step, $oneDay) ?>
   </section>
   <section class="panel">
-    <?= line_chart('Downloads and plays' . ($step > 1 ? ' per week' : ' per day'), [['Downloads', '--series-1', $bucket($dlDay)], ['Plays', '--series-2', $bucket($playDay)]], $step, $oneDay) ?>
+    <?= line_chart('Downloads and plays' . ($step >= 30 ? ' per 30 days' : ($step > 1 ? ' per week' : ' per day')), [['Downloads', '--series-1', $bucket($dlDay)], ['Plays', '--series-2', $bucket($playDay)]], $step, $oneDay) ?>
   </section>
 <?php if ($game): ?>
   <section class="panel">
-    <?= line_chart('Likes and bookmarks' . ($step > 1 ? ' per week' : ' per day'), [['Likes', '--series-1', $bucket($likeDay)], ['Bookmarks', '--series-2', $bucket($markDay)]], $step, $oneDay) ?>
+    <?= line_chart('Likes and bookmarks' . ($step >= 30 ? ' per 30 days' : ($step > 1 ? ' per week' : ' per day')), [['Likes', '--series-1', $bucket($likeDay)], ['Bookmarks', '--series-2', $bucket($markDay)]], $step, $oneDay) ?>
   </section>
 <?php endif ?>
 

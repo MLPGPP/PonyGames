@@ -187,3 +187,74 @@ function shot_item_paths(array $game, array $items, array $users): array
     }
     return $paths;
 }
+
+/* ---------------------------------------------------------------- pictures of resources (admin/resources.php) */
+
+/** "/asset_previews/12/3.png" -> ["12", "3.png"], or null for pictures outside a resource's own folder (placeholders, old single files). */
+function resource_shot_parts(string $path): ?array
+{
+    return preg_match('#^/?asset_previews/(\d+)/([0-9A-Za-z_.-]+\.(?:jpe?g|png|webp|gif))$#i', $path, $m) ? [$m[1], $m[2]] : null;
+}
+
+/** The pictures of a resource in display order: the card picture (thumbnail) first, then the previews. */
+function resource_shots(array $r): array
+{
+    $list = [];
+    foreach (array_merge([(string)($r['thumbnail'] ?? '')], (array)($r['previews'] ?? [])) as $p) {
+        if ($p !== '' && !in_array($p, $list, true)) $list[] = $p;
+    }
+    return $list;
+}
+
+/**
+ * Writes the new set of pictures of resource $id to asset_previews/<id>/ as 0.ext, 1.ext, …
+ * $items as for save_game_shots(); pictures outside that folder keep their path. The old files of
+ * the folder are moved to backups/asset_previews/. Returns the paths in order (the first is the card picture).
+ */
+function save_resource_shots(int $id, array $items): array
+{
+    $dir = ROOT . '/asset_previews/' . $id;
+    if (!is_dir($dir) && !mkdir($dir, 0775, true)) throw new RuntimeException("could not create asset_previews/$id");
+    if (!is_writable($dir)) throw new RuntimeException("asset_previews/$id is not writable by PHP. Check the folder permissions on the server.");
+    $stage = $dir . '/.staging-' . bin2hex(random_bytes(4));
+    mkdir($stage, 0775);
+    $paths = [];
+    try {
+        $n = 0;
+        foreach (array_values($items) as $it) {
+            if (isset($it['keep'])) {
+                $parts = resource_shot_parts($it['keep']);
+                if (!$parts || $parts[0] !== (string)$id) { $paths[] = $it['keep']; continue; } // not ours: keep the path
+                $src = $dir . '/' . $parts[1];
+                if (!is_file($src)) throw new RuntimeException('Picture ' . $it['keep'] . ' was not found on the server.');
+                $ext = strtolower(pathinfo($parts[1], PATHINFO_EXTENSION));
+                if ($ext === 'jpeg') $ext = 'jpg';
+                if (!copy($src, "$stage/$n.$ext")) throw new RuntimeException('could not copy ' . $it['keep']);
+            } else {
+                $ext = $it['ext'];
+                if (!copy($it['file'], "$stage/$n.$ext")) throw new RuntimeException('could not store a new picture');
+            }
+            @chmod("$stage/$n.$ext", 0664);
+            $paths[] = '/asset_previews/' . $id . '/' . $n . '.' . $ext;
+            $n++;
+        }
+        // the old pictures of this folder out of the way (kept in the backups), then the new ones in place
+        $trash = backups_dir() . '/asset_previews/' . $id . '-' . date('Ymd-His') . '-' . bin2hex(random_bytes(2));
+        $moved = [];
+        foreach (glob($dir . '/*.{jpg,jpeg,png,webp,gif,JPG,JPEG,PNG,GIF,WEBP}', GLOB_BRACE) ?: [] as $f) {
+            if (!is_dir($trash)) mkdir($trash, 0770, true);
+            if (!rename($f, $trash . '/' . basename($f))) throw new RuntimeException('could not move ' . basename($f));
+            $moved[] = basename($f);
+        }
+        foreach (glob($stage . '/*') ?: [] as $f) {
+            if (!rename($f, $dir . '/' . basename($f))) {
+                foreach ($moved as $m) @rename($trash . '/' . $m, $dir . '/' . $m);
+                throw new RuntimeException('could not move the new pictures into place');
+            }
+        }
+    } finally {
+        foreach (glob($stage . '/*') ?: [] as $f) @unlink($f);
+        @rmdir($stage);
+    }
+    return $paths;
+}

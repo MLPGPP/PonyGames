@@ -4,7 +4,7 @@
  *   GET  /api/notifications.php                      -> { unread, items: [{ id, kind, game, title, body, link, thumb, at, read }] }
  *        kind "update": a bookmarked game changed; "reply": someone answered your message;
  *        "mod": a message from the moderators about a report; "sub": a submission was accepted or rejected;
- *        "tip": about a bounty tip (answered, now a bounty, or the game was found)
+ *        "tip": about a bounty tip (answered, now a bounty, or the game was found); "req": about an asset request
  *   POST /api/notifications.php { action: "read", id }  -> { unread }   one notification read
  *   POST /api/notifications.php { action: "read-all" }  -> { unread }   all read
  * Only for the logged-in member; the newest 20 are listed.
@@ -52,14 +52,14 @@ try {
     $items = [];
     foreach ($st->fetchAll() as $n) {
         $g = $games[(string)$n['game_id']] ?? null;
-        if ($n['kind'] === 'sub' || $n['kind'] === 'tip') {
+        if ($n['kind'] === 'sub' || $n['kind'] === 'tip' || $n['kind'] === 'req') {
             $items[] = [
                 'id' => (int)$n['id'],
                 'kind' => $n['kind'],
                 'game' => (string)$n['game_id'],
                 'title' => (string)$n['title'],
                 'body' => (string)$n['body'],
-                'link' => (string)($n['link'] ?: ($n['kind'] === 'tip' ? '/bounties' : '/account#submissions')),
+                'link' => (string)($n['link'] ?: ['tip' => '/bounties', 'req' => '/requests'][$n['kind']] ?? '/account#submissions'),
                 'thumb' => $g['thumbnail'] ?? '/assets/mascot-head.png',
                 'avatar_color' => null,
                 'at' => (int)$n['created_at'],

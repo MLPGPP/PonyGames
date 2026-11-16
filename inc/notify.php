@@ -13,6 +13,7 @@
  *   message. These always show under the bell, whatever the settings say.
  * - notify_submission(): a submitted game or correction was accepted or
  *   rejected; same as above, always under the bell.
+ * - notify_linked('req', …) via request_notify() (inc/requests.php): about an asset request.
  * - notify_tip(): about a bounty tip: a moderator answered it, the suggested
  *   bounty is on the board now, or the game it was about was found.
  * - Email: one daily summary (send_daily_digests()) with everything new and
@@ -192,7 +193,7 @@ function notify_linked(string $kind, int $uid, string $gid, string $title, strin
 /** Unread messages from the moderators: these make the bell show up even when it's turned off. */
 function moderation_unread(int $uid): int
 {
-    $st = db()->prepare("SELECT COUNT(*) FROM notifications WHERE user_id = ? AND kind IN ('mod', 'sub', 'tip') AND read_at IS NULL");
+    $st = db()->prepare("SELECT COUNT(*) FROM notifications WHERE user_id = ? AND kind IN ('mod', 'sub', 'tip', 'req') AND read_at IS NULL");
     $st->execute([$uid]);
     return (int)$st->fetchColumn();
 }
@@ -279,7 +280,7 @@ function send_daily_digests(): int
                          LEFT JOIN users a ON a.id = n.actor_id
                          WHERE n.emailed_at IS NULL AND n.read_at IS NULL AND n.created_at > ?
                            AND u.notify_email = 1 AND u.email_verified = 1 AND u.email <> ''
-                           AND ((n.kind = 'update' AND u.notify_updates = 1) OR (n.kind = 'reply' AND u.notify_replies = 1) OR n.kind IN ('mod', 'sub', 'tip'))
+                           AND ((n.kind = 'update' AND u.notify_updates = 1) OR (n.kind = 'reply' AND u.notify_replies = 1) OR n.kind IN ('mod', 'sub', 'tip', 'req'))
                            AND " . NOTIFICATION_LIVE_SQL . "
                          ORDER BY n.user_id, n.created_at DESC");
     $st->execute([$since]);
@@ -315,6 +316,7 @@ function send_digest_email(array $user, array $items, array $games): bool
     $mod = array_values(array_filter($items, fn($n) => $n['kind'] === 'mod'));
     $subs = array_values(array_filter($items, fn($n) => $n['kind'] === 'sub'));
     $tips = array_values(array_filter($items, fn($n) => $n['kind'] === 'tip'));
+    $reqs = array_values(array_filter($items, fn($n) => $n['kind'] === 'req'));
     $font = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
     $count = fn(int $n, string $one, string $more) => $n . ' ' . ($n === 1 ? $one : $more);
 
@@ -322,6 +324,7 @@ function send_digest_email(array $user, array $items, array $games): bool
     if ($updates) $parts[] = $count(count($updates), 'game update', 'game updates');
     if ($replies) $parts[] = $count(count($replies), 'reply', 'replies');
     if ($subs) $parts[] = $count(count($subs), 'submission checked', 'submissions checked');
+    if ($reqs) $parts[] = $count(count($reqs), 'asset request update', 'asset request updates');
     if ($tips) $parts[] = $count(count($tips), 'bounty update', 'bounty updates');
     if ($mod) $parts[] = $count(count($mod), 'message from the moderators', 'messages from the moderators');
     $subject = 'Your Pony Games summary: ' . implode(', ', $parts);
@@ -350,6 +353,7 @@ function send_digest_email(array $user, array $items, array $games): bool
     $gameLink = fn(string $gid, string $hash = '') => isset($games[$gid]) ? $site . game_path($games[$gid]) . $hash : $site . '/games';
     $gameTitle = fn(string $gid, string $fallback) => (string)($games[$gid]['title'] ?? $fallback);
     $section('Your submissions', $subs, fn($n) => [(string)$n['title'], (string)$n['body'], $site . (string)$n['link']]);
+    $section('Asset requests', $reqs, fn($n) => [(string)$n['title'], (string)$n['body'], $site . (string)$n['link']]);
     $section('Bounty board', $tips, fn($n) => [(string)$n['title'], (string)$n['body'], $site . (string)$n['link']]);
     $section('From the moderators', $mod, fn($n) => [
         (string)$n['title'] . ' on ' . $gameTitle((string)$n['game_id'], 'a game'),

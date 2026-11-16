@@ -6,7 +6,7 @@
  * /game/12-title, ... CSS/JS get ?v=ASSET_V so browsers fetch new versions.
  */
 
-const ASSET_V = '20261113b'; // bump after changing css/ or js/
+const ASSET_V = '20261115b'; // bump after changing css/ or js/
 
 /**
  * <!DOCTYPE> through the header.
@@ -131,7 +131,18 @@ function render_header(string $active = 'games'): void
             <li class="nav-dropdown__sep"><a href="/submit"><span class="nav-dropdown__plus" aria-hidden="true">＋</span>Submit a game</a></li>
           </ul>
         </div>
-        <a href="/resources"<?= $on('resources') ?>>Resources</a>
+        <div class="nav-dropdown">
+          <a href="/resources" class="nav-dropdown__trigger<?= $active === 'resources' ? ' active' : '' ?>">Resources</a>
+          <button type="button" class="nav-dropdown__toggle" aria-expanded="false" aria-controls="resources-menu" aria-label="Show resource options">
+            <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <ul id="resources-menu" class="nav-dropdown__menu">
+            <li><a href="/resources"><span class="nav-dropdown__plus" aria-hidden="true">🧩</span>All resources</a></li>
+            <li><a href="/requests"><span class="nav-dropdown__plus" aria-hidden="true">🎨</span>Asset requests</a></li>
+            <li class="nav-dropdown__sep"><a href="/submit?resource"><span class="nav-dropdown__plus" aria-hidden="true">＋</span>Submit a resource</a></li>
+            <li><a href="/requests#ask"><span class="nav-dropdown__plus" aria-hidden="true">＋</span>Request an asset</a></li>
+          </ul>
+        </div>
         <a href="/bounties"<?= $on('bounties') ?>>Bounties</a>
         <a href="/about"<?= $on('about') ?>>About</a>
         <select id="theme-switcher" class="theme-switcher" aria-label="Site theme">

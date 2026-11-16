@@ -174,6 +174,63 @@ const SUBMIT_FIELD_LABELS = [
 ];
 const SUBMIT_MAX_VIDEOS = 10;
 
+/* ---------------------------------------------------------------------------
+   Resources (submit.php?resource -> kind 'resource'; published into data/resources.json)
+   --------------------------------------------------------------------------- */
+const RESOURCE_FIELD_LABELS = [
+    'name' => 'Name', 'author' => 'Made by', 'tags' => 'Type', 'license' => 'License', 'assetPack' => 'Asset pack',
+    'description' => 'Description', 'attribution' => 'How to credit', 'downloads' => 'Downloads',
+];
+// the usual licenses, also when no resource uses them yet (url for the resources page)
+const RESOURCE_LICENSES = [
+    'CC0 1.0' => 'https://creativecommons.org/publicdomain/zero/1.0/',
+    'CC-BY 4.0' => 'https://creativecommons.org/licenses/by/4.0/',
+    'CC-BY-SA 4.0' => 'https://creativecommons.org/licenses/by-sa/4.0/',
+    'CC-BY-NC 4.0' => 'https://creativecommons.org/licenses/by-nc/4.0/',
+    'CC-BY-NC-SA 4.0' => 'https://creativecommons.org/licenses/by-nc-sa/4.0/',
+    'CC-BY-NC-SA 3.0' => 'https://creativecommons.org/licenses/by-nc-sa/3.0/',
+    'GPL 3.0' => 'https://www.gnu.org/licenses/gpl-3.0.html',
+    'MIT' => 'https://opensource.org/license/mit',
+];
+
+/** What the resource form can choose from: types, licenses (name => url) and asset packs, from data/resources.json. */
+function resource_choices(): array
+{
+    static $cache = null;
+    if ($cache !== null) return $cache;
+    $raw = @file_get_contents(ROOT . '/data/resources.json');
+    $data = $raw ? (json_decode($raw, true) ?: []) : [];
+    $lic = RESOURCE_LICENSES;
+    foreach ($data['assets'] ?? [] as $a) foreach ($a['license'] ?? [] as $l) if (!empty($l['name']) && !isset($lic[$l['name']])) $lic[$l['name']] = (string)($l['url'] ?? '');
+    return $cache = [
+        'tags' => array_values(array_filter(array_map('strval', $data['allTags'] ?? ['2D', '3D', 'Background', 'Music', 'Sound Effect', 'Sprite', 'Tileset']))),
+        'licenses' => $lic,
+        'packs' => array_map('strval', array_keys($data['allAssetPacks'] ?? [])),
+    ];
+}
+
+/** A resources.json entry from a resource submission. $previews: the stored pictures, the first is the thumbnail. */
+function build_resource_json(array $v, int $id, array $previews): array
+{
+    $lic = resource_choices()['licenses'];
+    $name = (string)($v['license'] ?? '');
+    $pack = (string)($v['assetPack'] ?? '');
+    return [
+        'id' => $id,
+        'name' => (string)($v['name'] ?? ''),
+        'description' => (string)($v['description'] ?? ''),
+        'attribution' => (string)($v['attribution'] ?? ''),
+        'primaryAssetPack' => $pack,
+        'license' => $name !== '' ? [['name' => $name, 'url' => (string)($lic[$name] ?? '')]] : [],
+        'author' => $v['author'] ?? [] ?: ['Anonymous'],
+        'tags' => array_values((array)($v['tags'] ?? [])),
+        'assetPacks' => $pack !== '' ? [$pack] : [],
+        'downloads' => array_values((array)($v['downloads'] ?? [])),
+        'previews' => $previews,
+        'thumbnail' => $previews[0] ?? '',
+    ];
+}
+
 /** Builds a games.json entry from submitted values (for new games, or an edited copy of an existing one). */
 function build_game_json(array $v, ?array $base = null, ?int $newId = null, array $imagePaths = []): array
 {
