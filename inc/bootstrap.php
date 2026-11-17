@@ -346,6 +346,12 @@ function db(): PDO
             created_at INTEGER NOT NULL,
             resolved INTEGER NOT NULL DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS mail_log (    -- every email sent, for the hourly limit (inc/auth.php send_mail)
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL,                  -- 'digest' (daily summary) or 'account' (confirm, reset)
+            sent_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS mail_log_time ON mail_log (sent_at);
         CREATE TABLE IF NOT EXISTS stats_days (  -- visits and page views per day, kept after page_views is thinned out (api/track.php)
             day INTEGER PRIMARY KEY,             -- days since 1970 (UTC)
             visits INTEGER NOT NULL,

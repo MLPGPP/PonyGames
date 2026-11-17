@@ -238,8 +238,11 @@ function site_meta_get(string $key): ?string
 }
 
 /**
- * Called on visits (api/me.php): after DIGEST_HOUR, the first visit of the day
- * claims the run and sends the summaries after its answer went to the browser.
+ * Called on visits (api/me.php). After DIGEST_HOUR the first visit of the day
+ * starts today's round of summaries; they go out in portions that fit the
+ * hourly email limit (mail_budget('digest')), so later visits (at most one
+ * every few minutes) send the next portion until everyone had theirs.
+ * Everything runs after the answer went to the browser.
  */
 function maybe_send_digests(): void
 {
@@ -248,61 +251,105 @@ function maybe_send_digests(): void
         $now = new DateTimeImmutable('now', new DateTimeZone(DIGEST_TZ));
         if ((int)$now->format('G') < DIGEST_HOUR) return;
         $today = $now->format('Y-m-d');
-        if (site_meta_get('digest_day') === $today) return; // cheap check first
-        if (!claim_digest_day($today)) return;
-        after_response('send_daily_digests', 0);
+        if (site_meta_get('digest_day') !== $today) {
+            if (claim_digest_day($today)) after_response('send_daily_digests', 0);
+            return;
+        }
+        // today's round isn't finished: the next portion, when the hourly limit has room again
+        if (site_meta_get('digest_pending') === $today && claim_digest_turn()) after_response('send_daily_digests', 0);
     } catch (Throwable $e) {
         error_log('digest: ' . $e->getMessage());
     }
 }
 
-/** Only one request (or the cron job) gets to send today's summaries. */
+/**
+ * Only one request (or the cron job) starts today's round. What came in up to
+ * now goes in today's summaries (digest_cutoff); later notifications wait for tomorrow.
+ */
 function claim_digest_day(string $today): bool
 {
     $pdo = db();
     $pdo->exec("INSERT OR IGNORE INTO site_meta (key, value) VALUES ('digest_day', '')");
     $st = $pdo->prepare("UPDATE site_meta SET value = ? WHERE key = 'digest_day' AND value <> ?");
     $st->execute([$today, $today]);
+    if ($st->rowCount() !== 1) return false;
+    $pdo->prepare("INSERT OR REPLACE INTO site_meta (key, value) VALUES ('digest_cutoff', ?)")->execute([(string)time()]);
+    $pdo->prepare("INSERT OR REPLACE INTO site_meta (key, value) VALUES ('digest_pending', ?)")->execute([$today]);
+    $pdo->prepare("INSERT OR REPLACE INTO site_meta (key, value) VALUES ('digest_turn', ?)")->execute([(string)time()]);
+    return true;
+}
+
+/** One request at a time sends the next portion, at most every 5 minutes. */
+function claim_digest_turn(): bool
+{
+    $pdo = db();
+    $pdo->exec("INSERT OR IGNORE INTO site_meta (key, value) VALUES ('digest_turn', '0')");
+    $now = time();
+    $st = $pdo->prepare("UPDATE site_meta SET value = ? WHERE key = 'digest_turn' AND CAST(value AS INTEGER) < " . ($now - 300));
+    $st->execute([(string)$now]);
     return $st->rowCount() === 1;
 }
 
 /**
- * One email per member with everything new since the last summary that they
- * haven't seen on the site yet: updates to bookmarked games and replies to
- * their messages, as far as they switched those on. Returns the number of emails sent.
+ * The summaries still to send in today's round (admin/mail.php shows them too):
+ * [user id => their notifications], everything up to the start of the round
+ * (digest_cutoff) that wasn't mailed or seen on the site yet. With $cutoff:
+ * what would go out if a round started then (time() = next round preview).
  */
-function send_daily_digests(): int
+function digest_queue(?int $cutoff = null): array
 {
     $pdo = db();
-    $since = time() - DIGEST_MAX_AGE;
-    $st = $pdo->prepare("SELECT n.*, a.display_name AS actor_name FROM notifications n
+    $cutoff ??= (int)(site_meta_get('digest_cutoff') ?? 0) ?: time();
+    $since = $cutoff - DIGEST_MAX_AGE;
+    // numbers written into the query: bound values arrive as text, and SQLite never finds a number smaller than text
+    $st = $pdo->query("SELECT n.*, a.display_name AS actor_name FROM notifications n
                          JOIN users u ON u.id = n.user_id
                          LEFT JOIN users a ON a.id = n.actor_id
-                         WHERE n.emailed_at IS NULL AND n.read_at IS NULL AND n.created_at > ?
+                         WHERE n.emailed_at IS NULL AND n.read_at IS NULL AND n.created_at > $since AND n.created_at <= $cutoff
                            AND u.notify_email = 1 AND u.email_verified = 1 AND u.email <> ''
                            AND ((n.kind = 'update' AND u.notify_updates = 1) OR (n.kind = 'reply' AND u.notify_replies = 1) OR n.kind IN ('mod', 'sub', 'tip', 'req'))
                            AND " . NOTIFICATION_LIVE_SQL . "
                          ORDER BY n.user_id, n.created_at DESC");
-    $st->execute([$since]);
     $byUser = [];
     foreach ($st->fetchAll() as $n) $byUser[(int)$n['user_id']][] = $n;
+    return $byUser;
+}
+
+/**
+ * Sends the next portion of today's summaries: one email per member with
+ * everything new up to the start of today's round (digest_cutoff) that they
+ * haven't seen on the site yet, as far as they switched it on. As many as the
+ * hourly limit allows; the rest follows later (digest_pending). Returns the number sent.
+ */
+function send_daily_digests(): int
+{
+    $pdo = db();
+    $byUser = digest_queue();
     $sent = 0;
     $games = all_games();
     $users = $pdo->prepare('SELECT * FROM users WHERE id = ?');
     $mark = fn(array $ids) => $pdo->prepare('UPDATE notifications SET emailed_at = ? WHERE id IN (' . implode(',', array_map('intval', $ids)) . ')')->execute([time()]);
+    $budget = mail_budget('digest');
+    $left = 0;
     foreach ($byUser as $uid => $items) {
+        if ($sent >= $budget) { $left++; continue; } // the hourly limit: these follow in a later portion
         try {
             $users->execute([$uid]);
             $u = $users->fetch();
-            if (!$u || user_banned($u)) continue;
+            if (!$u || user_banned($u)) { $mark(array_column($items, 'id')); continue; }
             if (send_digest_email($u, $items, $games)) {
                 $sent++;
                 $mark(array_column($items, 'id'));
+            } elseif (mail_budget('digest') < 1) {
+                $left++; // refused because of the limit: try again later
             }
         } catch (Throwable $e) {
             error_log('digest for user ' . $uid . ': ' . $e->getMessage());
         }
     }
+    // finished when nobody is left over for today's round
+    $pdo->prepare("INSERT OR REPLACE INTO site_meta (key, value) VALUES ('digest_pending', ?)")->execute([$left ? (string)site_meta_get('digest_day') : '']);
+    if ($left) error_log("daily summary: sent $sent, $left more follow when the hourly email limit has room");
     return $sent;
 }
 
@@ -378,5 +425,5 @@ function send_digest_email(array $user, array $items, array $games): bool
         'You get this summary at most once a day, only when something happened. Choose what goes in it in your account settings, or turn these emails off with the link below.',
         ['Turn off these emails', $off]
     );
-    return send_mail((string)$user['email'], $subject, $text, $body);
+    return send_mail((string)$user['email'], $subject, $text, $body, 'digest');
 }

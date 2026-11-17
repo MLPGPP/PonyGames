@@ -36,7 +36,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         elseif (mail_enabled()) {
             // the new address only becomes active once it's confirmed
             if (send_verify_email($user, $email)) flash('ok', "We sent a confirmation link to $email. Your email changes once you click it.");
-            else flash('error', 'We couldn\'t send the confirmation email. Please try again later.');
+            else flash('error', mail_busy() ? MAIL_BUSY_MESSAGE : 'We couldn\'t send the confirmation email. Please try again later.');
         } else {
             $pdo->prepare('UPDATE users SET email = ?, email_verified = 0 WHERE id = ?')->execute([$email, $uid]);
             flash('ok', 'Your email address is now ' . $email . '.');
@@ -52,8 +52,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         flash('ok', 'Your notification settings are saved.');
     } elseif ($action === 'resend') {
         if (mail_enabled() && $user['email'] && !$user['email_verified'] && rate_ok('email-change', 5, 3600)) {
-            send_verify_email($user, $user['email']);
-            flash('ok', 'We sent a new confirmation link to ' . $user['email'] . '.');
+            if (send_verify_email($user, $user['email'])) flash('ok', 'We sent a new confirmation link to ' . $user['email'] . '.');
+            else flash('error', mail_busy() ? MAIL_BUSY_MESSAGE : 'We couldn\'t send the email. Please try again later.');
         }
     } elseif ($action === 'password') {
         $new = (string)($_POST['password'] ?? '');

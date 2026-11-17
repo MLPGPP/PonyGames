@@ -670,3 +670,11 @@ td.nowrap { white-space: nowrap; }
 .req-admin__acts { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-start; margin-top: .6rem; }
 .req-admin__acts > details[open] { flex-basis: 100%; }
 .req-admin__acts > form { margin: 0; }
+
+/* email page (admin/mail.php) */
+.mail-limits td { padding: .35rem .5rem; vertical-align: middle; }
+.mail-limits td:nth-child(2) { width: 45%; }
+.mail-bar { display: block; height: .55rem; min-width: 6rem; border-radius: 99px; background: rgba(127, 110, 170, .18); overflow: hidden; }
+.mail-bar > span { display: block; height: 100%; background: #2ecc71; border-radius: 99px; }
+.mail-bar > span.full { background: #e94560; }
+.mail-hours td:last-child { width: 30%; }

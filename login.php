@@ -76,6 +76,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 if ($sent) $welcome .= email_confirm_required()
                     ? ' We sent you an email: click the link in it to confirm your address, then you can like, bookmark, review and join discussions.'
                     : ' We sent you an email to confirm your address.';
+                else $welcome .= ' We couldn\'t send the confirmation email just now' . (mail_busy() ? ' because it\'s very busy' : '')
+                    . '. In a few minutes, ask for a new link on your account page.';
             }
             flash('ok', $welcome);
             header('Location: ' . $next);
@@ -86,6 +88,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             $errors[] = 'Please enter a valid email address.';
         } elseif (!rate_ok('forgot', 5, 3600)) {
             $errors[] = 'Too many requests. Please try again later.';
+        } elseif (mail_busy()) {
+            $errors[] = MAIL_BUSY_MESSAGE; // the same for every address, so it doesn't tell which ones have an account
         } else {
             if (mail_enabled()) {
                 $st = $pdo->prepare('SELECT * FROM users WHERE email = ?');

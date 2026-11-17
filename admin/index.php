@@ -305,7 +305,7 @@ $form = function (string $do, int $id, string $label, string $view, bool $danger
 <meta name="robots" content="noindex, nofollow">
 <title>Moderation | Pony Games</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Silkscreen&amp;display=swap">
-<link rel="stylesheet" href="admin.css?v=27">
+<link rel="stylesheet" href="admin.css?v=28">
 </head>
 <body>
 <?php if (empty($_SESSION['admin'])): ?>

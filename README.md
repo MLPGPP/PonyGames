@@ -471,13 +471,26 @@ signed per account). Banned accounts get nothing.
 
 It goes out after 9:00 Amsterdam time (`DIGEST_HOUR` / `DIGEST_TZ` in
 `inc/notify.php`). No cron job is needed: the first visit after that hour
-starts it in the background (via `api/me.php`), and it runs only once a day.
-To have it on time even when nobody visits, add a cron job:
+starts today's round in the background (via `api/me.php`). Everything that
+came in up to that moment goes in today's summaries; later notifications wait
+for tomorrow, so nobody gets two in a day.
 
-    5 9 * * *  php /path/to/site/cron/daily-digest.php
+**Hourly email limit.** Every email the site sends is counted (`mail_log`).
+`MAIL_LIMIT_PER_HOUR` (default 300) is what the mail server allows in total;
+`DIGEST_PER_HOUR` (default 200) is how many of those may be summaries. So
+there's always room for "confirm your email" and "reset your password". When
+there are more summaries than fit, the rest go out in later portions: visits
+send the next one (at most every 5 minutes) as soon as the last hour has room
+again. **Admin → Email** (`admin/mail.php`) shows how much of the limit the
+last hour used, how far today's round is, who is still waiting for their
+summary (with a button to send the next portion right away), and the emails
+sent per hour over the last two days. To have it on time even when nobody
+visits, run the cron job every hour:
 
-(`--force` sends again right away; only what wasn't mailed yet.) The `cron/`
-folder is blocked for web visitors in the nginx config.
+    5 * * * *  php /path/to/site/cron/daily-digest.php
+
+(`--force` starts a new round right away; only what wasn't mailed yet.) The
+`cron/` folder is blocked for web visitors in the nginx config.
 
 ## Discord channel for the moderators
 

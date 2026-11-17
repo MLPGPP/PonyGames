@@ -107,7 +107,7 @@ function admin_head(string $title): void
     echo '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
         . '<meta name="robots" content="noindex, nofollow"><title>' . h($title) . ' | Pony Games admin</title>'
         . '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Silkscreen&amp;display=swap">'
-        . '<link rel="stylesheet" href="admin.css?v=27"></head><body>';
+        . '<link rel="stylesheet" href="admin.css?v=28"></head><body>';
 }
 
 /** The menu at the top of every admin page. $counts: reports, submissions. */
@@ -142,6 +142,7 @@ function admin_nav(string $active, array $counts = []): void
         . $item('jams.php', 'Jams', ['jams'])
         . '<span class="sep" aria-hidden="true"></span>'
         . $item('stats.php', 'Stats', ['stats'])
+        . $item('mail.php', 'Email', ['mail'])
         . '</nav><div class="header__me"><span class="who">' . $me . '</span>'
         . '<form method="post" action="./"><input type="hidden" name="csrf" value="' . h($_SESSION['csrf'] ?? '') . '"><input type="hidden" name="do" value="logout"><button class="logout">Log out</button></form></div></header>';
 }

@@ -8,6 +8,9 @@
  *
  * .env keys used here (all optional):
  *   SMTP_HOST, SMTP_PORT (587), SMTP_SECURE (tls|ssl|none), SMTP_USER, SMTP_PASS, MAIL_FROM
+ *   MAIL_LIMIT_PER_HOUR (300): what the mail server allows, all emails together
+ *   DIGEST_PER_HOUR (200): how many of those may be daily summaries; the rest
+ *   stays free for account emails (confirm your email, reset your password)
  */
 
 declare(strict_types=1);
@@ -267,14 +270,68 @@ function mail_enabled(): bool
     return env('SMTP_HOST') !== '' && env('MAIL_FROM') !== '';
 }
 
+/* ---------------------------------------------------------------- hourly email limit */
+
+/** Emails per hour the mail server allows (0 = no limit). */
+function mail_limit(): int
+{
+    return max(0, (int)env('MAIL_LIMIT_PER_HOUR', '300'));
+}
+
+/** Emails sent in the last hour, all or of one kind ('digest', 'account'). */
+function mails_last_hour(?string $kind = null): int
+{
+    $st = db()->prepare('SELECT COUNT(*) FROM mail_log WHERE sent_at > ?' . ($kind !== null ? ' AND kind = ?' : ''));
+    $st->execute($kind !== null ? [time() - 3600, $kind] : [time() - 3600]);
+    return (int)$st->fetchColumn();
+}
+
+/**
+ * How many emails of this kind may go out right now. Daily summaries get at
+ * most DIGEST_PER_HOUR an hour, so there's always room left for account emails
+ * (confirm your email, reset your password), which may use everything up to the limit.
+ */
+function mail_budget(string $kind): int
+{
+    $limit = mail_limit();
+    if ($limit === 0) return PHP_INT_MAX;
+    $left = $limit - mails_last_hour();
+    if ($kind === 'digest') {
+        $digests = max(0, min($limit, (int)env('DIGEST_PER_HOUR', (string)min(200, $limit))));
+        $left = min($left, $digests - mails_last_hour('digest'));
+    }
+    return max(0, $left);
+}
+
+/** Account emails can't go out right now: the hourly limit is reached (say so instead of "we sent it"). */
+function mail_busy(): bool
+{
+    try {
+        return mail_enabled() && mail_budget('account') < 1;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+const MAIL_BUSY_MESSAGE = 'We can\'t send emails right now because it\'s very busy. Please try again in a few minutes.';
+
 /**
  * Sends an email: plain text, plus an HTML version when $html is given (mail
  * apps show the HTML one, or the text one if they can't). Returns false (and
- * logs why) when it fails.
+ * logs why) when it fails, or when the hourly limit is reached ($kind: 'digest'
+ * for the daily summary, 'account' for the rest; see mail_budget()).
  */
-function send_mail(string $to, string $subject, string $body, ?string $html = null): bool
+function send_mail(string $to, string $subject, string $body, ?string $html = null, string $kind = 'account'): bool
 {
     if (!mail_enabled()) return false;
+    try {
+        if (mail_budget($kind) < 1) {
+            error_log("mail to $to not sent: the hourly limit (MAIL_LIMIT_PER_HOUR) is reached");
+            return false;
+        }
+    } catch (Throwable $e) {
+        error_log('mail limit: ' . $e->getMessage()); // no database: send anyway
+    }
     $host = env('SMTP_HOST');
     $port = (int)env('SMTP_PORT', '587');
     $secure = strtolower(env('SMTP_SECURE', $port === 465 ? 'ssl' : 'tls'));
@@ -351,6 +408,12 @@ function send_mail(string $to, string $subject, string $body, ?string $html = nu
         $cmd(implode("\r\n", $headers) . "\r\n\r\n" . $message . "\r\n.", [250]);
         $cmd('QUIT', [221]);
         fclose($fp);
+        try { // count it for the hourly limit; forget what's older than two days
+            db()->prepare('INSERT INTO mail_log (kind, sent_at) VALUES (?, ?)')->execute([$kind, time()]);
+            if (random_int(1, 50) === 1) db()->prepare('DELETE FROM mail_log WHERE sent_at < ?')->execute([time() - 2 * 86400]);
+        } catch (Throwable $e) {
+            error_log('mail log: ' . $e->getMessage());
+        }
         return true;
     } catch (Throwable $e) {
         error_log('pony games mail: ' . $e->getMessage());
