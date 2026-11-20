@@ -63,6 +63,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         if (!valid_email($email)) $errors[] = 'Please enter a valid email address.';
         if ($e = display_name_error($name)) $errors[] = $e;
         if ($e = password_error($password)) $errors[] = $e;
+        elseif ($password !== (string)($_POST['password2'] ?? '')) $errors[] = 'The two passwords are not the same.';
         if (!$errors && !rate_ok('signup', 5, 3600)) $errors[] = 'Too many new accounts from your connection. Please try again later.';
         if (!$errors && email_taken($email)) $errors[] = 'There\'s already an account with this email. Try logging in instead.';
         if (!$errors) {
@@ -175,6 +176,11 @@ render_page_start($tab === 'signup' ? 'Create an account' : 'Log in', '', 'Log i
           </span>
           <input type="password" name="password" required <?= $tab === 'signup' ? 'minlength="8" autocomplete="new-password" placeholder="At least 8 characters"' : 'autocomplete="current-password"' ?>>
         </label>
+  <?php if ($tab === 'signup'): ?>
+        <label class="post-form__field">Password again
+          <input type="password" name="password2" required minlength="8" autocomplete="new-password" placeholder="Type it again, to be sure">
+        </label>
+  <?php endif ?>
         <label class="hp" aria-hidden="true">Leave empty <input name="website" tabindex="-1" autocomplete="off"></label>
         <button class="btn btn--accent auth-form__submit"><?= $tab === 'signup' ? 'Create my account' : 'Log in' ?></button>
   <?php if ($tab === 'signup'): ?>
