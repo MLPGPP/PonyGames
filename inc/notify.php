@@ -1,0 +1,429 @@
+<?php
+/**
+ * Notifications for members: updates to the games they bookmarked, and
+ * replies to their messages in a game's discussion.
+ *
+ * - notify_game_updates(): when games.json is saved (admin, accepted
+ *   submission, rollback), every changed game that someone bookmarked gives
+ *   them a notification; a second change within 6 hours updates the unread one.
+ * - notify_reply(): someone answered a member's message; more replies to the
+ *   same message while it's unread update that notification.
+ * - notify_moderation(): a moderator handled a report; the reporter, and the
+ *   writer of the post if something was done about it, get the moderator's
+ *   message. These always show under the bell, whatever the settings say.
+ * - notify_submission(): a submitted game or correction was accepted or
+ *   rejected; same as above, always under the bell.
+ * - notify_linked('req', …) via request_notify() (inc/requests.php): about an asset request.
+ * - notify_tip(): about a bounty tip: a moderator answered it, the suggested
+ *   bounty is on the board now, or the game it was about was found.
+ * - Email: one daily summary (send_daily_digests()) with everything new and
+ *   still unread, of the kinds the member chose. It goes out once a day after
+ *   DIGEST_HOUR (Amsterdam time): started by the first visit after that hour
+ *   (api/me.php), or by cron/daily-digest.php if a cron job runs it.
+ * Members choose what (game updates, replies) and how (bell, email) in their
+ * account settings; every email has a one-click link to stop them.
+ */
+
+declare(strict_types=1);
+
+const NOTIFY_MERGE_SECONDS = 6 * 3600;     // changes this close together become one notification
+const DIGEST_HOUR = 9;                     // the daily summary goes out after 9:00 ...
+const DIGEST_TZ = 'Europe/Amsterdam';      // ... in this time zone
+const DIGEST_MAX_AGE = 7 * 86400;          // older unsent notifications are not mailed anymore
+const DIGEST_MAX_ITEMS = 15;               // per section in one email
+
+/** What changed between two versions of a game, as short lines ([] when nothing that matters). */
+function game_update_summary(array $old, array $new): array
+{
+    $out = [];
+    $dlKey = fn($d) => is_array($d) ? trim(($d['label'] ?? '') . ' ' . ($d['version'] ?? '')) . '|' . ($d['url'] ?? '') : '';
+    $oldDl = array_map($dlKey, (array)($old['downloads'] ?? []));
+    foreach ((array)($new['downloads'] ?? []) as $d) {
+        if (!is_array($d) || in_array($dlKey($d), $oldDl, true)) continue;
+        $name = trim(($d['label'] ?? '') . ' ' . ($d['version'] ?? ''));
+        $out[] = 'New download' . ($name !== '' ? ': ' . $name : '');
+    }
+    if (($old['status'] ?? '') !== ($new['status'] ?? '') && ($new['status'] ?? '') !== '') {
+        $out[] = 'Now ' . $new['status'] . (($old['status'] ?? '') !== '' ? ' (was ' . $old['status'] . ')' : '');
+    }
+    if (($old['title'] ?? '') !== ($new['title'] ?? '')) $out[] = 'New name: ' . ($new['title'] ?? '');
+    if (count((array)($new['videos'] ?? [])) > count((array)($old['videos'] ?? []))) $out[] = 'New video';
+    if (count((array)($new['screenshots'] ?? [])) > count((array)($old['screenshots'] ?? []))) $out[] = 'New pictures';
+    if (($old['releaseDate'] ?? '') !== ($new['releaseDate'] ?? '') && ($new['releaseDate'] ?? '') !== '') $out[] = 'Release date: ' . $new['releaseDate'];
+    if (!$out) {
+        // anything else people would care about (not just a moved field or a fixed typo in the tags)
+        foreach (['fullDescription', 'shortDescription', 'downloads', 'url', 'author', 'platforms', 'engine', 'thumbnail', 'screenshots', 'videos'] as $k) {
+            if (json_encode($old[$k] ?? null) !== json_encode($new[$k] ?? null)) { $out[] = 'Details updated'; break; }
+        }
+    }
+    $out = array_values(array_unique($out));
+    if (count($out) > 3) $out = array_merge(array_slice($out, 0, 3), ['and more']);
+    return $out;
+}
+
+/** Called by save_content() for games.json with the list before and after the save. */
+function notify_game_updates(array $oldGames, array $newGames): void
+{
+    try {
+        $before = [];
+        foreach ($oldGames as $g) if (isset($g['id'])) $before[(string)$g['id']] = $g;
+        $changed = [];
+        foreach ($newGames as $g) {
+            $id = (string)($g['id'] ?? '');
+            if ($id === '' || !isset($before[$id])) continue; // new games: nobody bookmarked them yet
+            $lines = game_update_summary($before[$id], $g);
+            if ($lines) $changed[$id] = ['title' => (string)($g['title'] ?? 'A game'), 'body' => implode(' · ', $lines), 'game' => $g];
+        }
+        if (!$changed) return;
+
+        $pdo = db();
+        $in = implode(',', array_fill(0, count($changed), '?'));
+        $st = $pdo->prepare("SELECT b.game_id, u.id, u.notify_site, u.notify_email, u.notify_updates, u.ban_until
+                             FROM user_bookmarks b JOIN users u ON u.id = b.user_id WHERE b.game_id IN ($in)");
+        $st->execute(array_map('strval', array_keys($changed)));
+        $now = time();
+        foreach ($st->fetchAll() as $r) {
+            if (user_banned($r) || !(int)$r['notify_updates']) continue;
+            if (!(int)$r['notify_site'] && !(int)$r['notify_email']) continue;
+            $gid = (string)$r['game_id'];
+            $c = $changed[$gid];
+            $uid = (int)$r['id'];
+            // one unread notification per game: a change soon after the last one updates it
+            $q = $pdo->prepare("SELECT id, body FROM notifications WHERE user_id = ? AND game_id = ? AND kind = 'update' AND read_at IS NULL AND created_at > ? ORDER BY id DESC LIMIT 1");
+            $q->execute([$uid, $gid, $now - NOTIFY_MERGE_SECONDS]);
+            if ($open = $q->fetch()) {
+                $body = implode(' · ', array_slice(array_unique(array_merge(explode(' · ', (string)$open['body']), explode(' · ', $c['body']))), 0, 4));
+                $pdo->prepare('UPDATE notifications SET title = ?, body = ?, created_at = ?, emailed_at = NULL WHERE id = ?')->execute([$c['title'], $body, $now, $open['id']]);
+            } else {
+                $pdo->prepare('INSERT INTO notifications (user_id, game_id, title, body, created_at) VALUES (?, ?, ?, ?, ?)')
+                    ->execute([$uid, $gid, $c['title'], $c['body'], $now]);
+            }
+        }
+    } catch (Throwable $e) {
+        error_log('notify: ' . $e->getMessage()); // a failed notification never stops a save
+    }
+}
+
+/**
+ * Someone replied to a member's message in a game's discussion.
+ * $target = the message that was answered (needs user_id, id, game_id),
+ * $reply = the new reply (id, body), $actor = who wrote it.
+ * A second reply to the same message while the first notification is still
+ * unread updates that one. Email: in the daily summary.
+ */
+function notify_reply(array $target, array $reply, array $actor, array $game): void
+{
+    try {
+        $uid = (int)($target['user_id'] ?? 0);
+        if ($uid <= 0 || $uid === (int)$actor['id']) return; // nobody to tell, or your own message
+        $pdo = db();
+        $st = $pdo->prepare('SELECT * FROM users WHERE id = ?');
+        $st->execute([$uid]);
+        $u = $st->fetch();
+        if (!$u || user_banned($u) || !(int)($u['notify_replies'] ?? 1)) return;
+        if (!(int)$u['notify_site'] && !(int)$u['notify_email']) return;
+        $gid = (string)$target['game_id'];
+        $ref = (int)$target['id'];
+        $name = (string)$actor['display_name'];
+        $snippet = reply_snippet((string)$reply['body']);
+        $now = time();
+        $q = $pdo->prepare("SELECT id, actor_id, title FROM notifications WHERE user_id = ? AND kind = 'reply' AND ref_id = ? AND read_at IS NULL ORDER BY id DESC LIMIT 1");
+        $q->execute([$uid, $ref]);
+        if ($open = $q->fetch()) {
+            $others = (int)$open['actor_id'] !== (int)$actor['id'] || str_contains((string)$open['title'], ' and others ');
+            $title = $name . ($others ? ' and others replied' : ' replied') . ' to your message';
+            $pdo->prepare('UPDATE notifications SET title = ?, body = ?, post_id = ?, actor_id = ?, created_at = ?, emailed_at = NULL WHERE id = ?')
+                ->execute([$title, $snippet, (int)$reply['id'], (int)$actor['id'], $now, (int)$open['id']]);
+        } else {
+            $pdo->prepare("INSERT INTO notifications (user_id, game_id, title, body, created_at, kind, ref_id, post_id, actor_id) VALUES (?, ?, ?, ?, ?, 'reply', ?, ?, ?)")
+                ->execute([$uid, $gid, $name . ' replied to your message', $snippet, $now, $ref, (int)$reply['id'], (int)$actor['id']]);
+        }
+    } catch (Throwable $e) {
+        error_log('notify reply: ' . $e->getMessage()); // never stops the reply itself
+    }
+}
+
+/**
+ * A message from the moderators (kind 'mod'): about a report the member made,
+ * or about their own post that was reported. $postId: link to that post (only
+ * when it can still be seen). Shown under the bell even when the member turned
+ * the bell off; in the daily email when they get that.
+ */
+function notify_moderation(int $uid, string $gid, string $title, string $body, int $reportId, ?int $postId = null): void
+{
+    if ($uid <= 0) return;
+    try {
+        db()->prepare("INSERT INTO notifications (user_id, game_id, title, body, created_at, kind, ref_id, post_id) VALUES (?, ?, ?, ?, ?, 'mod', ?, ?)")
+            ->execute([$uid, $gid, $title, $body, time(), $reportId, $postId]);
+    } catch (Throwable $e) {
+        error_log('notify moderation: ' . $e->getMessage());
+    }
+}
+
+/**
+ * A submission was accepted or rejected (kind 'sub'). $link: the game page when
+ * it's on the site, otherwise the member's list of submissions.
+ */
+function notify_submission(int $uid, string $gid, string $title, string $body, int $subId, string $link): void
+{
+    notify_linked('sub', $uid, $gid, $title, $body, $subId, $link);
+}
+
+/**
+ * About a bounty tip (kind 'tip', ref_id = the tip). $link: the found game, or
+ * the bounty board. $gid: the found game, if any (for its picture).
+ */
+function notify_tip(int $uid, string $title, string $body, int $tipId, string $link = '/bounties', string $gid = ''): void
+{
+    notify_linked('tip', $uid, $gid, $title, $body, $tipId, $link);
+}
+
+/** A notification with its own link (kinds 'sub' and 'tip'). */
+function notify_linked(string $kind, int $uid, string $gid, string $title, string $body, int $refId, string $link): void
+{
+    if ($uid <= 0) return;
+    try {
+        db()->prepare('INSERT INTO notifications (user_id, game_id, title, body, created_at, kind, ref_id, link) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+            ->execute([$uid, $gid, $title, $body, time(), $kind, $refId, $link]);
+    } catch (Throwable $e) {
+        error_log('notify ' . $kind . ': ' . $e->getMessage());
+    }
+}
+
+/** Unread messages from the moderators: these make the bell show up even when it's turned off. */
+function moderation_unread(int $uid): int
+{
+    $st = db()->prepare("SELECT COUNT(*) FROM notifications WHERE user_id = ? AND kind IN ('mod', 'sub', 'tip', 'req') AND read_at IS NULL");
+    $st->execute([$uid]);
+    return (int)$st->fetchColumn();
+}
+
+/** A short one-line version of a message for the bell. */
+function reply_snippet(string $body, int $max = 140): string
+{
+    $s = trim(preg_replace('/\s+/u', ' ', $body) ?? '');
+    return mb_strlen($s) > $max ? rtrim(mb_substr($s, 0, $max - 1)) . '…' : $s;
+}
+
+/** A reply was deleted: its notification goes too (if it's still unread and about that reply). */
+function forget_reply_notification(int $postId): void
+{
+    try {
+        db()->prepare("DELETE FROM notifications WHERE kind = 'reply' AND post_id = ? AND read_at IS NULL")->execute([$postId]);
+    } catch (Throwable $e) {
+    }
+}
+
+/** The link in every notification email that turns those emails off, no login needed. */
+function notify_off_url(int $uid): string
+{
+    $sig = substr(hash_hmac('sha256', 'notify-off|' . $uid, salt()), 0, 24);
+    return request_origin() . '/notify-off.php?u=' . $uid . '&t=' . $sig;
+}
+
+function notify_off_valid(int $uid, string $sig): bool
+{
+    return $uid > 0 && hash_equals(substr(hash_hmac('sha256', 'notify-off|' . $uid, salt()), 0, 24), $sig);
+}
+
+/* ---------- the daily summary email ---------- */
+
+/** Key-value store for small bits of site state (here: the day the summary last went out). */
+function site_meta_get(string $key): ?string
+{
+    $st = db()->prepare('SELECT value FROM site_meta WHERE key = ?');
+    $st->execute([$key]);
+    $v = $st->fetchColumn();
+    return $v === false ? null : (string)$v;
+}
+
+/**
+ * Called on visits (api/me.php). After DIGEST_HOUR the first visit of the day
+ * starts today's round of summaries; they go out in portions that fit the
+ * hourly email limit (mail_budget('digest')), so later visits (at most one
+ * every few minutes) send the next portion until everyone had theirs.
+ * Everything runs after the answer went to the browser.
+ */
+function maybe_send_digests(): void
+{
+    try {
+        if (!mail_enabled()) return;
+        $now = new DateTimeImmutable('now', new DateTimeZone(DIGEST_TZ));
+        if ((int)$now->format('G') < DIGEST_HOUR) return;
+        $today = $now->format('Y-m-d');
+        if (site_meta_get('digest_day') !== $today) {
+            if (claim_digest_day($today)) after_response('send_daily_digests', 0);
+            return;
+        }
+        // today's round isn't finished: the next portion, when the hourly limit has room again
+        if (site_meta_get('digest_pending') === $today && claim_digest_turn()) after_response('send_daily_digests', 0);
+    } catch (Throwable $e) {
+        error_log('digest: ' . $e->getMessage());
+    }
+}
+
+/**
+ * Only one request (or the cron job) starts today's round. What came in up to
+ * now goes in today's summaries (digest_cutoff); later notifications wait for tomorrow.
+ */
+function claim_digest_day(string $today): bool
+{
+    $pdo = db();
+    $pdo->exec("INSERT OR IGNORE INTO site_meta (key, value) VALUES ('digest_day', '')");
+    $st = $pdo->prepare("UPDATE site_meta SET value = ? WHERE key = 'digest_day' AND value <> ?");
+    $st->execute([$today, $today]);
+    if ($st->rowCount() !== 1) return false;
+    $pdo->prepare("INSERT OR REPLACE INTO site_meta (key, value) VALUES ('digest_cutoff', ?)")->execute([(string)time()]);
+    $pdo->prepare("INSERT OR REPLACE INTO site_meta (key, value) VALUES ('digest_pending', ?)")->execute([$today]);
+    $pdo->prepare("INSERT OR REPLACE INTO site_meta (key, value) VALUES ('digest_turn', ?)")->execute([(string)time()]);
+    return true;
+}
+
+/** One request at a time sends the next portion, at most every 5 minutes. */
+function claim_digest_turn(): bool
+{
+    $pdo = db();
+    $pdo->exec("INSERT OR IGNORE INTO site_meta (key, value) VALUES ('digest_turn', '0')");
+    $now = time();
+    $st = $pdo->prepare("UPDATE site_meta SET value = ? WHERE key = 'digest_turn' AND CAST(value AS INTEGER) < " . ($now - 300));
+    $st->execute([(string)$now]);
+    return $st->rowCount() === 1;
+}
+
+/**
+ * The summaries still to send in today's round (admin/mail.php shows them too):
+ * [user id => their notifications], everything up to the start of the round
+ * (digest_cutoff) that wasn't mailed or seen on the site yet. With $cutoff:
+ * what would go out if a round started then (time() = next round preview).
+ */
+function digest_queue(?int $cutoff = null): array
+{
+    $pdo = db();
+    $cutoff ??= (int)(site_meta_get('digest_cutoff') ?? 0) ?: time();
+    $since = $cutoff - DIGEST_MAX_AGE;
+    // numbers written into the query: bound values arrive as text, and SQLite never finds a number smaller than text
+    $st = $pdo->query("SELECT n.*, a.display_name AS actor_name FROM notifications n
+                         JOIN users u ON u.id = n.user_id
+                         LEFT JOIN users a ON a.id = n.actor_id
+                         WHERE n.emailed_at IS NULL AND n.read_at IS NULL AND n.created_at > $since AND n.created_at <= $cutoff
+                           AND u.notify_email = 1 AND u.email_verified = 1 AND u.email <> ''
+                           AND ((n.kind = 'update' AND u.notify_updates = 1) OR (n.kind = 'reply' AND u.notify_replies = 1) OR n.kind IN ('mod', 'sub', 'tip', 'req'))
+                           AND " . NOTIFICATION_LIVE_SQL . "
+                         ORDER BY n.user_id, n.created_at DESC");
+    $byUser = [];
+    foreach ($st->fetchAll() as $n) $byUser[(int)$n['user_id']][] = $n;
+    return $byUser;
+}
+
+/**
+ * Sends the next portion of today's summaries: one email per member with
+ * everything new up to the start of today's round (digest_cutoff) that they
+ * haven't seen on the site yet, as far as they switched it on. As many as the
+ * hourly limit allows; the rest follows later (digest_pending). Returns the number sent.
+ */
+function send_daily_digests(): int
+{
+    $pdo = db();
+    $byUser = digest_queue();
+    $sent = 0;
+    $games = all_games();
+    $users = $pdo->prepare('SELECT * FROM users WHERE id = ?');
+    $mark = fn(array $ids) => $pdo->prepare('UPDATE notifications SET emailed_at = ? WHERE id IN (' . implode(',', array_map('intval', $ids)) . ')')->execute([time()]);
+    $budget = mail_budget('digest');
+    $left = 0;
+    foreach ($byUser as $uid => $items) {
+        if ($sent >= $budget) { $left++; continue; } // the hourly limit: these follow in a later portion
+        try {
+            $users->execute([$uid]);
+            $u = $users->fetch();
+            if (!$u || user_banned($u)) { $mark(array_column($items, 'id')); continue; }
+            if (send_digest_email($u, $items, $games)) {
+                $sent++;
+                $mark(array_column($items, 'id'));
+            } elseif (mail_budget('digest') < 1) {
+                $left++; // refused because of the limit: try again later
+            }
+        } catch (Throwable $e) {
+            error_log('digest for user ' . $uid . ': ' . $e->getMessage());
+        }
+    }
+    // finished when nobody is left over for today's round
+    $pdo->prepare("INSERT OR REPLACE INTO site_meta (key, value) VALUES ('digest_pending', ?)")->execute([$left ? (string)site_meta_get('digest_day') : '']);
+    if ($left) error_log("daily summary: sent $sent, $left more follow when the hourly email limit has room");
+    return $sent;
+}
+
+function send_digest_email(array $user, array $items, array $games): bool
+{
+    $site = request_origin();
+    $e = fn(string $t) => htmlspecialchars($t, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $name = (string)$user['display_name'];
+    $updates = array_values(array_filter($items, fn($n) => $n['kind'] === 'update'));
+    $replies = array_values(array_filter($items, fn($n) => $n['kind'] === 'reply'));
+    $mod = array_values(array_filter($items, fn($n) => $n['kind'] === 'mod'));
+    $subs = array_values(array_filter($items, fn($n) => $n['kind'] === 'sub'));
+    $tips = array_values(array_filter($items, fn($n) => $n['kind'] === 'tip'));
+    $reqs = array_values(array_filter($items, fn($n) => $n['kind'] === 'req'));
+    $font = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+    $count = fn(int $n, string $one, string $more) => $n . ' ' . ($n === 1 ? $one : $more);
+
+    $parts = [];
+    if ($updates) $parts[] = $count(count($updates), 'game update', 'game updates');
+    if ($replies) $parts[] = $count(count($replies), 'reply', 'replies');
+    if ($subs) $parts[] = $count(count($subs), 'submission checked', 'submissions checked');
+    if ($reqs) $parts[] = $count(count($reqs), 'asset request update', 'asset request updates');
+    if ($tips) $parts[] = $count(count($tips), 'bounty update', 'bounty updates');
+    if ($mod) $parts[] = $count(count($mod), 'message from the moderators', 'messages from the moderators');
+    $subject = 'Your Pony Games summary: ' . implode(', ', $parts);
+
+    $text = "Hi $name!\n\nHere's what happened since your last summary.\n";
+    $html = [];
+    $section = function (string $title, array $list, callable $row) use (&$text, &$html, $e, $font) {
+        if (!$list) return;
+        $text .= "\n" . strtoupper($title) . "\n";
+        $rows = '';
+        foreach (array_slice($list, 0, DIGEST_MAX_ITEMS) as $n) {
+            [$head, $sub, $link] = $row($n);
+            $text .= "- $head: $sub\n  $link\n";
+            $rows .= '<tr><td style="padding:10px 0;border-top:1px solid #2a2a4a;">'
+                . '<a href="' . $e($link) . '" style="' . $font . 'font-size:15px;font-weight:700;color:#ff6b81;text-decoration:none;">' . $e($head) . '</a>'
+                . '<div style="' . $font . 'font-size:14px;line-height:1.45;color:#eaeaea;padding-top:3px;">' . $e($sub) . '</div></td></tr>';
+        }
+        if (count($list) > DIGEST_MAX_ITEMS) {
+            $more = count($list) - DIGEST_MAX_ITEMS;
+            $text .= "- and $more more\n";
+            $rows .= '<tr><td style="padding:10px 0;border-top:1px solid #2a2a4a;' . $font . 'font-size:14px;color:#a0a0b8;">and ' . $more . ' more on the site</td></tr>';
+        }
+        $html[] = ['html' => '<h2 style="margin:22px 0 6px;' . $font . 'font-size:13px;letter-spacing:0.06em;text-transform:uppercase;color:#a0a0b8;">' . $e($title) . '</h2>'
+            . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">' . $rows . '</table>'];
+    };
+    $gameLink = fn(string $gid, string $hash = '') => isset($games[$gid]) ? $site . game_path($games[$gid]) . $hash : $site . '/games';
+    $gameTitle = fn(string $gid, string $fallback) => (string)($games[$gid]['title'] ?? $fallback);
+    $section('Your submissions', $subs, fn($n) => [(string)$n['title'], (string)$n['body'], $site . (string)$n['link']]);
+    $section('Asset requests', $reqs, fn($n) => [(string)$n['title'], (string)$n['body'], $site . (string)$n['link']]);
+    $section('Bounty board', $tips, fn($n) => [(string)$n['title'], (string)$n['body'], $site . (string)$n['link']]);
+    $section('From the moderators', $mod, fn($n) => [
+        (string)$n['title'] . ' on ' . $gameTitle((string)$n['game_id'], 'a game'),
+        (string)$n['body'],
+        $gameLink((string)$n['game_id'], $n['post_id'] ? '#post-' . (int)$n['post_id'] : ''),
+    ]);
+    $section('Games you bookmarked', $updates, fn($n) => [$gameTitle((string)$n['game_id'], (string)$n['title']), (string)$n['body'], $gameLink((string)$n['game_id'])]);
+    $section('Replies to your messages', $replies, fn($n) => [
+        (string)$n['title'] . ' on ' . $gameTitle((string)$n['game_id'], 'a game'),
+        '“' . $n['body'] . '”',
+        $gameLink((string)$n['game_id'], '#post-' . (int)$n['post_id']),
+    ]);
+
+    $off = notify_off_url((int)$user['id']);
+    $settings = $site . '/account?tab=settings#notifications';
+    $text .= "\nChange what you get: $settings\nDon't want these emails anymore? $off\n\n- The Pony Games herd";
+    $body = mail_html(
+        'Your daily summary',
+        array_merge(["Hi $name!", "Here's what happened since your last summary."], $html),
+        'Open Pony Games',
+        $site . '/',
+        'You get this summary at most once a day, only when something happened. Choose what goes in it in your account settings, or turn these emails off with the link below.',
+        ['Turn off these emails', $off]
+    );
+    return send_mail((string)$user['email'], $subject, $text, $body, 'digest');
+}
